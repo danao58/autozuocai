@@ -2,6 +2,7 @@
 
 const STORE_KEY = "cookbook_app_v1";
 const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
+const CONFIG = window.APP_CONFIG || {};
 const mealLabels = {
   breakfast: "早餐",
   lunch: "午餐",
@@ -50,8 +51,14 @@ let state = {
     recipeDifficulty: "",
     recipeTime: "",
     fridgeSearch: "",
-    historySearch: ""
-  }
+    historySearch: "",
+    ingredientAdminSearch: "",
+    ingredientAdminCategory: "",
+    recipeAdminSearch: "",
+    recipeAdminTag: "",
+    recipeAdminDifficulty: ""
+  },
+  adminAuthed: false
 };
 
 const app = document.querySelector("#app");
@@ -567,14 +574,13 @@ function renderModal() {
     const r = recipeById(modal.recipeId);
     if (!r) return "";
     return modalShell(`
-          ${imageHtml(r)}
+          <div class="detail-cover">${imageHtml(r)}</div>
           <div class="modal-body">
             <div class="actions" style="justify-content:space-between">
               <div>
                 <h2>${escapeHtml(r.name)}</h2>
                 <p class="muted">${escapeHtml(r.desc)}</p>
               </div>
-              <button class="ghost" data-action="close-modal" type="button">关闭</button>
             </div>
             ${tagsHtml(r.tags)}
             <h3>所需食材</h3>
@@ -603,6 +609,16 @@ function renderModal() {
             <button class="ghost" data-action="close-modal" type="button">取消</button>
           </div>
     `, "确认操作", "compact");
+  }
+  if (modal.type === "adminAuth") {
+    return modalShell(`
+          <h2>后台管理验证</h2>
+          <p class="muted">请输入后台管理密码。</p>
+          <form id="adminAuthForm">
+            <label>密码<input name="password" type="password" autocomplete="current-password" autofocus></label>
+            <div class="actions" style="margin-top:14px"><button type="submit">进入后台</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+          </form>
+    `, "后台管理验证", "compact");
   }
   if (modal.type === "categoryForm") {
     const item = modal.id ? categoryById(modal.id) : null;
@@ -650,7 +666,7 @@ function renderModal() {
           <form id="shoppingForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>食材<select name="ingredientId">${state.data.ingredients.map((i) => `<option value="${i.id}" ${i.id === item?.ingredientId ? "selected" : ""}>${escapeHtml(i.name)}（${escapeHtml(i.unit)}）</option>`).join("")}</select></label>
-            <label>数量<input name="count" type="number" min="0.1" step="0.1" value="${escapeHtml(item?.count ?? 1)}"></label>
+            <label>数量${stepperInput("count", item?.count ?? 1, 0.1, 0.1)}</label>
             <div class="actions" style="margin-top:14px"><button data-action="save-shopping-form" type="button">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "购物项表单", "compact");
@@ -662,11 +678,23 @@ function renderModal() {
           <p class="muted">${escapeHtml(item?.name || "")}</p>
           <form id="fridgeForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
-            <label>库存<input name="stock" type="number" min="0" value="${escapeHtml(item?.stock ?? 0)}"></label>
+            <label>库存${stepperInput("stock", item?.stock ?? 0, 1, 0)}</label>
             <label>保质期<input name="expireAt" type="date" value="${escapeHtml(item?.expireAt || "")}"></label>
             <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "冰箱库存编辑", "compact");
+  }
+  if (modal.type === "fridgeAdd") {
+    return modalShell(`
+          <h2>加入食材</h2>
+          <p class="muted">从食材管理中选择已有食材，填写本次加入数量。</p>
+          <form id="fridgeAddForm">
+            <label>食材<select name="ingredientId">${state.data.ingredients.map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}（${escapeHtml(ing.unit)}，当前 ${ing.stock}${escapeHtml(ing.unit)}）</option>`).join("")}</select></label>
+            <label>加入数量${stepperInput("count", 1, 1, 0.1)}</label>
+            <label>保质期<input name="expireAt" type="date"></label>
+            <div class="actions" style="margin-top:14px"><button type="submit">加入冰箱</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+          </form>
+    `, "加入食材", "compact");
   }
   if (modal.type === "recipeForm") {
     const item = modal.id ? recipeById(modal.id) : null;
@@ -681,7 +709,7 @@ function renderModal() {
     return modalShell(`
           <h2>临期预警设置</h2>
           <form id="warningForm">
-            <label>提前预警天数<input name="expireWarningDays" type="number" min="0" step="1" value="${expireWarningDays()}"></label>
+            <label>提前预警天数${stepperInput("expireWarningDays", expireWarningDays(), 1, 0)}</label>
             <p class="muted">设置为 0 表示仅到期当天提示临期。</p>
             <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
@@ -699,6 +727,34 @@ function modalShell(content, label, size = "") {
       </section>
     </div>
   `;
+}
+
+function stepperInput(name, value = 0, stepValue = 1, min = 0) {
+  return `
+    <div class="stepper" data-step="${stepValue}" data-min="${min}">
+      <button class="ghost stepper-btn" data-action="stepper-minus" type="button" aria-label="减少">-</button>
+      <input name="${escapeHtml(name)}" type="number" min="${min}" step="${stepValue}" value="${escapeHtml(value)}">
+      <button class="ghost stepper-btn" data-action="stepper-plus" type="button" aria-label="增加">+</button>
+    </div>
+  `;
+}
+
+function updateStepper(button, direction) {
+  const box = button.closest(".stepper");
+  const input = box?.querySelector("input");
+  if (!input) return;
+  const stepValue = Number(box.dataset.step) || 1;
+  const min = Number(box.dataset.min) || 0;
+  const current = Number(input.value);
+  const base = Number.isFinite(current) ? current : min;
+  const next = Math.max(min, base + stepValue * direction);
+  input.value = formatStepperValue(next, stepValue);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function formatStepperValue(value, stepValue) {
+  const decimals = String(stepValue).includes(".") ? String(stepValue).split(".")[1].length : 0;
+  return decimals ? value.toFixed(decimals).replace(/\.?0+$/, "") : String(Math.round(value));
 }
 
 function mealHint(value) {
@@ -734,7 +790,7 @@ function summaryText() {
 function renderRecommend() {
   const recipes = sortedRecipes(state.data.recipes);
   return `
-    <p class="notice">双击菜品卡片查看完整详情。推荐卡片只保留关键决策信息。</p>
+    <p class="notice">双击菜品卡片查看完整详情。</p>
     <section class="grid">
       ${recipes.map((item) => recipeCard(item, { compact: true })).join("") || `<div class="empty">还没有菜谱</div>`}
     </section>
@@ -906,47 +962,52 @@ function renderFridge() {
     .filter((ing) => hasStock(ing) && ["soon", "expired"].includes(expireState(ing)))
     .sort((a, b) => (daysUntilExpire(a) ?? 9999) - (daysUntilExpire(b) ?? 9999));
   return `
-    <section class="toolbar">
-      <input style="max-width:320px" data-filter="fridgeSearch" value="${escapeHtml(state.filters.fridgeSearch)}" placeholder="搜索食材">
-      <button class="ghost" data-action="open-warning-settings" type="button">临期预警：${expireWarningDays()} 天</button>
-    </section>
-    <p class="notice">点击分类切换冰箱内容；双击食材卡片或预警食材可修改库存和保质期；顶部页面标签可拖动排序。</p>
-    <section class="panel warning-panel">
-      <div class="actions" style="justify-content:space-between">
-        <div>
-          <h2>临期食品预警</h2>
-          <p class="muted">提前 ${expireWarningDays()} 天提醒，已过期食材会优先显示。</p>
-        </div>
+    <section class="fridge-shop">
+      <div class="fridge-searchbar">
+        <input data-filter="fridgeSearch" value="${escapeHtml(state.filters.fridgeSearch)}" placeholder="搜索食材">
+        <button data-action="open-fridge-add-form" type="button">加入食材</button>
+        <button class="ghost" data-action="open-warning-settings" type="button">临期预警：${expireWarningDays()} 天</button>
       </div>
-      <div class="warning-list">
-        ${warningItems.map((ing) => `
-          <article class="warning-item ${expireState(ing)}" data-action="edit-fridge" data-id="${ing.id}" title="双击修改库存和保质期">
-            <strong>${escapeHtml(ing.name)}</strong>
-            <span>${expireText(ing)}</span>
-            <em>${ing.stock}${escapeHtml(ing.unit)}</em>
-          </article>
-        `).join("") || `<div class="empty">暂无临期或过期食材</div>`}
-      </div>
-    </section>
-    <section class="panel">
-      <div class="meal-switch fridge-switch" role="tablist" aria-label="冰箱分类切换">
-        ${categories.map((cat) => {
-          const count = state.data.ingredients.filter((ing) => ing.categoryId === cat.id).length;
-          return `<button class="${state.activeFridgeCategoryId === cat.id ? "active" : ""}" data-action="switch-fridge-category" data-id="${cat.id}" type="button">${escapeHtml(cat.name)}<span>${count}</span></button>`;
-        }).join("") || `<span class="muted">暂无分类</span>`}
-      </div>
-    </section>
-    <section class="panel" style="margin-top:14px">
-      <h2>${escapeHtml(activeCategory?.name || "冰箱")}</h2>
-      <div class="fridge-grid">${items.map((ing) => `
-        <article class="fridge-item" data-action="edit-fridge" data-id="${ing.id}" title="双击修改库存和保质期">
+      <section class="panel warning-panel">
+        <div class="actions" style="justify-content:space-between">
           <div>
-            <strong>${escapeHtml(ing.name)}</strong>
-            <p class="muted">${ing.stock}${escapeHtml(ing.unit)} · ${ing.expireAt ? `保质期 ${escapeHtml(ing.expireAt)}` : "未设置保质期"}</p>
+            <h2>临期食品预警</h2>
+            <p class="muted">提前 ${expireWarningDays()} 天提醒，已过期食材会优先显示。</p>
           </div>
-          <div class="fridge-meta">${expireBadge(ing)}</div>
-        </article>
-      `).join("") || `<div class="empty">这个分类暂无食材</div>`}</div>
+        </div>
+        <div class="warning-list">
+          ${warningItems.map((ing) => `
+            <article class="warning-item ${expireState(ing)}" data-action="edit-fridge" data-id="${ing.id}" title="双击修改库存和保质期">
+              <strong>${escapeHtml(ing.name)}</strong>
+              <span>${expireText(ing)}</span>
+              <em>${ing.stock}${escapeHtml(ing.unit)}</em>
+            </article>
+          `).join("") || `<div class="empty">暂无临期或过期食材</div>`}
+        </div>
+      </section>
+      <div class="fridge-shop-body">
+        <aside class="fridge-cats" aria-label="冰箱分类">
+          ${categories.map((cat) => {
+            const count = state.data.ingredients.filter((ing) => ing.categoryId === cat.id).length;
+            return `<button class="${state.activeFridgeCategoryId === cat.id ? "active" : ""}" data-action="switch-fridge-category" data-id="${cat.id}" type="button">${escapeHtml(cat.name)}<span>${count}</span></button>`;
+          }).join("") || `<span class="muted">暂无分类</span>`}
+        </aside>
+        <section class="fridge-menu">
+          <div class="fridge-menu-head">
+            <h2>${escapeHtml(activeCategory?.name || "冰箱")}</h2>
+            <span>${items.length} 项</span>
+          </div>
+          <div class="fridge-grid">${items.map((ing) => `
+            <article class="fridge-item" data-action="edit-fridge" data-id="${ing.id}" title="双击修改库存和保质期">
+              <div>
+                <strong>${escapeHtml(ing.name)}</strong>
+                <p class="muted">${ing.stock}${escapeHtml(ing.unit)} · ${ing.expireAt ? `保质期 ${escapeHtml(ing.expireAt)}` : "未设置保质期"}</p>
+              </div>
+              <div class="fridge-meta">${expireBadge(ing)}</div>
+            </article>
+          `).join("") || `<div class="empty">这个分类暂无食材</div>`}</div>
+        </section>
+      </div>
     </section>
   `;
 }
@@ -984,21 +1045,51 @@ function renderShopping() {
 function renderHistory() {
   const keyword = state.filters.historySearch.trim();
   const list = state.data.cookHistory.filter((h) => !keyword || h.recipeName.includes(keyword)).slice().reverse();
+  const groups = list.reduce((result, item) => {
+    const key = formatDateKey(item.cookedAt);
+    if (!result[key]) result[key] = [];
+    result[key].push(item);
+    return result;
+  }, {});
   return `
     <section class="toolbar"><input style="max-width:320px" data-filter="historySearch" value="${escapeHtml(state.filters.historySearch)}" placeholder="搜索历史菜名"></section>
-    <section class="panel">
-      <table class="table">
-        <thead><tr><th>菜名</th><th>制作时间</th><th>操作</th></tr></thead>
-        <tbody>${list.map((h) => `
-          <tr>
-            <td>${escapeHtml(h.recipeName)}</td>
-            <td>${new Date(h.cookedAt).toLocaleString()}</td>
-            <td><button class="ghost" data-action="add-today" data-id="${h.recipeId}" type="button">再次加入今日菜品</button></td>
-          </tr>
-        `).join("") || `<tr><td colspan="3" class="muted">暂无历史</td></tr>`}</tbody>
-      </table>
+    <section class="history-groups">
+      ${Object.entries(groups).map(([date, items]) => `
+        <article class="history-day">
+          <header>
+            <h2>${escapeHtml(date)}</h2>
+            <span>${items.length} 道</span>
+          </header>
+          <div class="history-list">
+            ${items.map((h) => `
+              <div class="history-item">
+                <div>
+                  <strong>${escapeHtml(h.recipeName)}</strong>
+                  <p class="muted">${formatTimeOfDay(h.cookedAt)}</p>
+                </div>
+                <button class="ghost" data-action="add-today" data-id="${h.recipeId}" type="button">再次加入</button>
+              </div>
+            `).join("")}
+          </div>
+        </article>
+      `).join("") || `<div class="empty">暂无历史</div>`}
     </section>
   `;
+}
+
+function formatDateKey(value) {
+  const date = new Date(value);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function formatTimeOfDay(value) {
+  const date = new Date(value);
+  const h = String(date.getHours()).padStart(2, "0");
+  const m = String(date.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
 }
 
 function renderCategories() {
@@ -1013,10 +1104,21 @@ function renderCategories() {
 }
 
 function renderIngredients() {
+  const keyword = state.filters.ingredientAdminSearch.trim();
+  const categoryId = state.filters.ingredientAdminCategory;
+  const list = state.data.ingredients.filter((ing) => {
+    const matchKeyword = !keyword || ing.name.includes(keyword);
+    const matchCategory = !categoryId || ing.categoryId === categoryId;
+    return matchKeyword && matchCategory;
+  });
   return `
     <section class="panel">
       <div class="actions" style="justify-content:space-between"><h2>食材列表</h2><button data-action="open-ingredient-form" type="button">新增食材</button></div>
-      <table class="table"><thead><tr><th>名称</th><th>分类</th><th>库存</th><th>保质期</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.data.ingredients.map((ing) => `
+      <div class="admin-filters">
+        <input data-filter="ingredientAdminSearch" value="${escapeHtml(state.filters.ingredientAdminSearch)}" placeholder="搜索食材名称">
+        <select data-filter="ingredientAdminCategory"><option value="">全部分类</option>${state.data.categories.map((cat) => `<option value="${cat.id}" ${cat.id === categoryId ? "selected" : ""}>${escapeHtml(cat.name)}</option>`).join("")}</select>
+      </div>
+      <table class="table"><thead><tr><th>名称</th><th>分类</th><th>库存</th><th>保质期</th><th>状态</th><th>操作</th></tr></thead><tbody>${list.map((ing) => `
         <tr>
           <td>${escapeHtml(ing.name)}</td>
           <td>${escapeHtml(categoryById(ing.categoryId)?.name || "未分类")}</td>
@@ -1025,7 +1127,7 @@ function renderIngredients() {
           <td>${expireBadge(ing)}</td>
           <td><button class="ghost" data-action="open-ingredient-form" data-id="${ing.id}" type="button">编辑</button> <button class="danger" data-action="delete-ingredient" data-id="${ing.id}" type="button">删除</button></td>
         </tr>
-      `).join("")}</tbody></table>
+      `).join("") || `<tr><td colspan="6" class="muted">没有匹配的食材</td></tr>`}</tbody></table>
     </section>
   `;
 }
@@ -1050,10 +1152,25 @@ function categoryOptions(selected = "") {
 }
 
 function renderRecipeAdmin() {
+  const tags = state.data.tags.map((tag) => tag.name);
+  const keyword = state.filters.recipeAdminSearch.trim();
+  const activeTag = state.filters.recipeAdminTag;
+  const activeDifficulty = state.filters.recipeAdminDifficulty;
+  const list = sortedRecipes(state.data.recipes.filter((recipeItem) => {
+    const matchKeyword = !keyword || `${recipeItem.name} ${recipeItem.desc}`.includes(keyword);
+    const matchTag = !activeTag || recipeItem.tags.includes(activeTag);
+    const matchDifficulty = !activeDifficulty || recipeItem.difficulty === activeDifficulty;
+    return matchKeyword && matchTag && matchDifficulty;
+  }));
   return `
     <section class="panel">
       <div class="actions" style="justify-content:space-between"><h2>菜谱列表</h2><button data-action="open-recipe-form" type="button">新增菜谱</button></div>
-      <div class="grid" style="margin-top:14px">${sortedRecipes(state.data.recipes).map((r) => recipeCard(r, { admin: true })).join("")}</div>
+      <div class="admin-filters">
+        <input data-filter="recipeAdminSearch" value="${escapeHtml(state.filters.recipeAdminSearch)}" placeholder="搜索菜名或描述">
+        <select data-filter="recipeAdminTag"><option value="">全部标签</option>${tags.map((tag) => `<option value="${tag}" ${tag === activeTag ? "selected" : ""}>${escapeHtml(tag)}</option>`).join("")}</select>
+        <select data-filter="recipeAdminDifficulty"><option value="">全部难度</option>${difficulties.map((d) => `<option ${d === activeDifficulty ? "selected" : ""}>${d}</option>`).join("")}</select>
+      </div>
+      <div class="grid" style="margin-top:14px">${list.map((r) => recipeCard(r, { admin: true })).join("") || `<div class="empty">没有匹配的菜谱</div>`}</div>
     </section>
   `;
 }
@@ -1124,7 +1241,7 @@ function consumeEditor(consume, stepIndex, consumeIndex) {
   return `
     <div class="consume-row" data-consume-index="${consumeIndex}">
       <label>食材<select name="consumeIngredient_${stepIndex}_${consumeIndex}"><option value="">不选择</option>${state.data.ingredients.map((ing) => `<option value="${ing.id}" ${ing.id === consume.ingredientId ? "selected" : ""}>${escapeHtml(ing.name)}（${escapeHtml(ing.unit)}）</option>`).join("")}</select></label>
-      <label>数量<input name="consumeCount_${stepIndex}_${consumeIndex}" type="number" min="0.1" step="0.1" value="${consume.count || ""}"></label>
+      <label>数量${stepperInput(`consumeCount_${stepIndex}_${consumeIndex}`, consume.count || 1, 0.1, 0.1)}</label>
       <button class="danger" data-action="remove-consume" type="button">删</button>
     </div>
   `;
@@ -1164,6 +1281,11 @@ function askMealAndAdd(recipeId) {
 
 function openConfirm(title, message, onConfirm, confirmText = "确认") {
   state.modal = { type: "confirm", title, message, onConfirm, confirmText };
+  render();
+}
+
+function openAdminAuth(nextPage = "categories", nextModal = null) {
+  state.modal = { type: "adminAuth", nextPage, nextModal };
   render();
 }
 
@@ -1359,6 +1481,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (mode) {
+    if (mode === "admin" && !state.adminAuthed) return openAdminAuth("categories");
     state.mode = mode;
     state.page = mode === "front" ? "recommend" : "categories";
     render();
@@ -1372,6 +1495,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "go-page") state.page = btn.dataset.page;
   if (action === "go-admin-recipe") {
+    if (!state.adminAuthed) return openAdminAuth("recipeAdmin", { type: "recipeForm" });
     state.mode = "admin";
     state.page = "recipeAdmin";
     state.modal = { type: "recipeForm" };
@@ -1404,12 +1528,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (action === "finish-cooking") return finishCooking();
-  if (action === "stock-minus" || action === "stock-plus") {
-    const ing = ingredientById(id);
-    ing.stock = Math.max(0, Number(ing.stock) + (action === "stock-plus" ? 1 : -1));
-    saveAndRender();
-    return;
-  }
+  if (action === "stepper-minus" || action === "stepper-plus") return updateStepper(btn, action === "stepper-plus" ? 1 : -1);
   if (action === "edit-fridge") {
     state.modal = { type: "fridgeEdit", id };
     render();
@@ -1417,6 +1536,12 @@ document.addEventListener("click", (event) => {
   }
   if (action === "open-warning-settings") {
     state.modal = { type: "warningSettings" };
+    render();
+    return;
+  }
+  if (action === "open-fridge-add-form") {
+    if (!state.data.ingredients.length) return showToast("请先在食材管理中新增食材");
+    state.modal = { type: "fridgeAdd" };
     render();
     return;
   }
@@ -1678,6 +1803,19 @@ document.addEventListener("change", (event) => {
 
 document.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (event.target.id === "adminAuthForm") {
+    const fd = new FormData(event.target);
+    const password = fd.get("password")?.toString() || "";
+    if (password !== String(CONFIG.adminPassword || "")) return showToast("密码错误");
+    const nextPage = state.modal?.nextPage || "categories";
+    const nextModal = state.modal?.nextModal || null;
+    state.adminAuthed = true;
+    state.mode = "admin";
+    state.page = nextPage;
+    state.modal = nextModal;
+    render();
+    return;
+  }
   if (event.target.id === "categoryForm") {
     const fd = new FormData(event.target);
     const name = fd.get("name").toString().trim();
@@ -1741,6 +1879,19 @@ document.addEventListener("submit", (event) => {
     ing.expireAt = fd.get("expireAt");
     state.modal = null;
     saveAndRender("冰箱已更新");
+  }
+  if (event.target.id === "fridgeAddForm") {
+    const fd = new FormData(event.target);
+    const ing = ingredientById(fd.get("ingredientId"));
+    if (!ing) return showToast("请选择食材");
+    const count = Number(fd.get("count"));
+    if (!Number.isFinite(count) || count <= 0) return showToast("加入数量必须大于 0");
+    ing.stock = Number(ing.stock) + count;
+    const expireAt = fd.get("expireAt");
+    if (expireAt) ing.expireAt = expireAt;
+    state.activeFridgeCategoryId = ing.categoryId;
+    state.modal = null;
+    saveAndRender("食材已加入冰箱");
   }
   if (event.target.id === "warningForm") {
     const fd = new FormData(event.target);
