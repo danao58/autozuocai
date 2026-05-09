@@ -9,7 +9,7 @@ const mealLabels = {
   snack: "加餐"
 };
 const difficulties = ["简单", "中等", "复杂"];
-const commonTags = ["快手菜", "家常", "下饭", "主食", "素菜", "低脂", "早餐", "暖胃"];
+const defaultTags = ["快手菜", "家常", "下饭", "主食", "素菜", "低脂", "早餐", "暖胃"];
 const units = ["个", "克", "斤", "把", "颗", "瓣", "勺", "碗", "份", "毫升"];
 const timeOptions = [
   { label: "不计时", value: 0 },
@@ -28,11 +28,12 @@ const pageLabels = {
   history: "做菜历史",
   categories: "食材分类",
   ingredients: "食材管理",
+  tags: "标签管理",
   recipeAdmin: "菜谱管理",
   backup: "备份恢复"
 };
 const defaultFrontOrder = ["recommend", "today", "recipes", "fridge", "shopping", "history"];
-const defaultAdminOrder = ["categories", "ingredients", "recipeAdmin", "backup"];
+const defaultAdminOrder = ["categories", "ingredients", "tags", "recipeAdmin", "backup"];
 
 let state = {
   mode: "front",
@@ -48,7 +49,6 @@ let state = {
     recipeTag: "",
     recipeDifficulty: "",
     recipeTime: "",
-    recipeFavorite: false,
     fridgeSearch: "",
     historySearch: ""
   }
@@ -99,6 +99,7 @@ function createEmptyData() {
   return {
     categories: [],
     ingredients: [],
+    tags: defaultTags.map((name) => tagItem(name)),
     recipes: [],
     todayDishes: [],
     shoppingList: [],
@@ -164,6 +165,7 @@ function createDemoData() {
   return normalizeData({
     categories,
     ingredients,
+    tags: defaultTags.map((name) => tagItem(name)),
     recipes,
     todayDishes: [],
     shoppingList: [],
@@ -186,6 +188,10 @@ function recipe(id, name, desc, color, tags, difficulty, favorite, steps) {
   };
 }
 
+function tagItem(name, id = "") {
+  return { id: id || uid("tag"), name };
+}
+
 function step(content, time, consumes) {
   return {
     id: uid("step"),
@@ -196,6 +202,7 @@ function step(content, time, consumes) {
 }
 
 function normalizeData(data) {
+  const normalizedTags = normalizeTags(data.tags, data.recipes);
   return {
     categories: Array.isArray(data.categories) ? data.categories : [],
     ingredients: Array.isArray(data.ingredients) ? data.ingredients.map((item) => ({
@@ -206,6 +213,7 @@ function normalizeData(data) {
       unit: item.unit || "",
       expireAt: item.expireAt || ""
     })) : [],
+    tags: normalizedTags,
     recipes: Array.isArray(data.recipes) ? data.recipes.map((item) => ({
       id: item.id || uid("rec"),
       name: item.name || "",
@@ -262,6 +270,29 @@ function validateImport(data) {
   });
 }
 
+function normalizeTags(tags, recipes = []) {
+  const names = [];
+  if (Array.isArray(tags)) {
+    tags.forEach((item) => {
+      const name = typeof item === "string" ? item.trim() : item?.name?.toString().trim();
+      if (name && !names.includes(name)) names.push(name);
+    });
+  }
+  if (!names.length && Array.isArray(recipes)) {
+    recipes.forEach((recipeItem) => {
+      (Array.isArray(recipeItem.tags) ? recipeItem.tags : []).forEach((tag) => {
+        const name = tag?.toString().trim();
+        if (name && !names.includes(name)) names.push(name);
+      });
+    });
+  }
+  if (!names.length) names.push(...defaultTags);
+  return names.map((name) => {
+    const existing = Array.isArray(tags) ? tags.find((item) => item?.name === name || item === name) : null;
+    return tagItem(name, existing?.id || "");
+  });
+}
+
 function saveAndRender(message) {
   storage.save(state.data);
   render();
@@ -295,6 +326,10 @@ function ingredientById(id) {
 
 function categoryById(id) {
   return state.data.categories.find((item) => item.id === id);
+}
+
+function tagById(id) {
+  return state.data.tags.find((item) => item.id === id);
 }
 
 function recipeById(id) {
@@ -339,7 +374,6 @@ function sortedRecipes(recipes) {
       let value = 0;
       if (status.canCook) value += 1000;
       if (status.expiring.length) value += 120;
-      if (recipeItem.favorite) value += 80;
       value -= status.missing.length * 20;
       if (recentIds.has(recipeItem.id)) value -= 60;
       return value;
@@ -457,7 +491,6 @@ function recipeCard(recipeItem, options = {}) {
       <div class="card-body">
         <div class="actions" style="justify-content:space-between">
           <h3>${escapeHtml(recipeItem.name)}</h3>
-          <button class="ghost" data-action="toggle-favorite" data-id="${recipeItem.id}" type="button">${recipeItem.favorite ? "★" : "☆"}</button>
         </div>
         <p class="muted">${escapeHtml(recipeItem.desc)}</p>
         ${tagsHtml(recipeItem.tags)}
@@ -496,6 +529,7 @@ function render() {
     history: renderHistory,
     categories: renderCategories,
     ingredients: renderIngredients,
+    tags: renderTags,
     recipeAdmin: renderRecipeAdmin,
     backup: renderBackup
   };
@@ -577,9 +611,20 @@ function renderModal() {
           <form id="categoryForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>分类名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
-            <div class="actions" style="margin-top:14px"><button data-action="save-shopping-form" type="button">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "分类表单", "compact");
+  }
+  if (modal.type === "tagForm") {
+    const item = modal.id ? tagById(modal.id) : null;
+    return modalShell(`
+          <h2>${item ? "编辑标签" : "新增标签"}</h2>
+          <form id="tagForm">
+            <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
+            <label>标签名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
+            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+          </form>
+    `, "标签表单", "compact");
   }
   if (modal.type === "ingredientForm") {
     const item = modal.id ? ingredientById(modal.id) : null;
@@ -606,7 +651,7 @@ function renderModal() {
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>食材<select name="ingredientId">${state.data.ingredients.map((i) => `<option value="${i.id}" ${i.id === item?.ingredientId ? "selected" : ""}>${escapeHtml(i.name)}（${escapeHtml(i.unit)}）</option>`).join("")}</select></label>
             <label>数量<input name="count" type="number" min="0.1" step="0.1" value="${escapeHtml(item?.count ?? 1)}"></label>
-            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px"><button data-action="save-shopping-form" type="button">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "购物项表单", "compact");
   }
@@ -786,32 +831,66 @@ function formatClock(seconds) {
 }
 
 function renderRecipes() {
-  const tags = [...new Set(state.data.recipes.flatMap((r) => r.tags))].sort();
+  const tags = state.data.tags.map((tag) => tag.name);
+  const activeTag = state.filters.recipeTag;
   let list = state.data.recipes.filter((r) => {
     const keyword = state.filters.recipeSearch.trim();
     const matchKeyword = !keyword || `${r.name} ${r.desc}`.includes(keyword);
     const matchTag = !state.filters.recipeTag || r.tags.includes(state.filters.recipeTag);
     const matchDifficulty = !state.filters.recipeDifficulty || r.difficulty === state.filters.recipeDifficulty;
-    const matchFavorite = !state.filters.recipeFavorite || r.favorite;
     const maxTime = Number(state.filters.recipeTime);
     const matchTime = !maxTime || totalTime(r) <= maxTime * 60;
-    return matchKeyword && matchTag && matchDifficulty && matchFavorite && matchTime;
+    return matchKeyword && matchTag && matchDifficulty && matchTime;
   });
   list = sortedRecipes(list);
   return `
-    <section class="panel">
-      <div class="form-grid">
-        <label>搜索<input data-filter="recipeSearch" value="${escapeHtml(state.filters.recipeSearch)}" placeholder="菜名或描述"></label>
-        <label>标签<select data-filter="recipeTag"><option value="">全部标签</option>${tags.map((tag) => `<option ${tag === state.filters.recipeTag ? "selected" : ""}>${escapeHtml(tag)}</option>`).join("")}</select></label>
-        <label>难度<select data-filter="recipeDifficulty"><option value="">全部难度</option>${difficulties.map((d) => `<option ${d === state.filters.recipeDifficulty ? "selected" : ""}>${d}</option>`).join("")}</select></label>
-        <label>耗时<select data-filter="recipeTime"><option value="">不限</option><option value="15" ${state.filters.recipeTime === "15" ? "selected" : ""}>15 分钟内</option><option value="30" ${state.filters.recipeTime === "30" ? "selected" : ""}>30 分钟内</option><option value="60" ${state.filters.recipeTime === "60" ? "selected" : ""}>60 分钟内</option></select></label>
-      </div>
-      <div class="actions" style="margin-top:12px">
-        <button class="ghost" data-action="toggle-favorite-filter" type="button">${state.filters.recipeFavorite ? "查看全部" : "只看收藏"}</button>
+    <section class="recipe-shop">
+      <div class="recipe-searchbar">
+        <input data-filter="recipeSearch" value="${escapeHtml(state.filters.recipeSearch)}" placeholder="搜索菜名或描述">
+        <select data-filter="recipeDifficulty"><option value="">全部难度</option>${difficulties.map((d) => `<option ${d === state.filters.recipeDifficulty ? "selected" : ""}>${d}</option>`).join("")}</select>
+        <select data-filter="recipeTime"><option value="">不限耗时</option><option value="15" ${state.filters.recipeTime === "15" ? "selected" : ""}>15 分钟内</option><option value="30" ${state.filters.recipeTime === "30" ? "selected" : ""}>30 分钟内</option><option value="60" ${state.filters.recipeTime === "60" ? "selected" : ""}>60 分钟内</option></select>
         <button data-action="go-admin-recipe" type="button">新增菜谱</button>
       </div>
+      <div class="recipe-shop-body">
+        <aside class="recipe-cats" aria-label="菜谱标签">
+          <button class="${activeTag ? "" : "active"}" data-action="set-recipe-tag" data-tag="" type="button">全部<span>${state.data.recipes.length}</span></button>
+          ${tags.map((tag) => {
+            const count = state.data.recipes.filter((r) => r.tags.includes(tag)).length;
+            return `<button class="${activeTag === tag ? "active" : ""}" data-action="set-recipe-tag" data-tag="${escapeHtml(tag)}" type="button">${escapeHtml(tag)}<span>${count}</span></button>`;
+          }).join("")}
+        </aside>
+        <section class="recipe-menu">
+          ${list.map((item) => recipeMenuItem(item)).join("") || `<div class="empty">没有匹配的菜谱</div>`}
+        </section>
+      </div>
     </section>
-    <section class="grid" style="margin-top:14px">${list.map((item) => recipeCard(item)).join("") || `<div class="empty">没有匹配的菜谱</div>`}</section>
+  `;
+}
+
+function recipeMenuItem(recipeItem) {
+  const status = recipeStatus(recipeItem);
+  const inToday = state.data.todayDishes.some((item) => item.recipeId === recipeItem.id);
+  return `
+    <article class="recipe-menu-item" data-action="view-recipe" data-id="${recipeItem.id}" title="双击查看详情">
+      ${imageHtml(recipeItem)}
+      <div class="recipe-menu-main">
+        <div class="recipe-menu-head">
+          <h3>${escapeHtml(recipeItem.name)}</h3>
+          <span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可做" : `缺 ${status.missing.length}`}</span>
+        </div>
+        <p>${escapeHtml(recipeItem.desc || "暂无描述")}</p>
+        <div class="recipe-menu-meta">
+          <span>${escapeHtml(recipeItem.difficulty)}</span>
+          <span>${formatTime(totalTime(recipeItem))}</span>
+          ${status.expiring.length ? `<span class="warn-text">有临期</span>` : ""}
+        </div>
+        ${status.missing.length ? `<div class="recipe-menu-missing">${escapeHtml(status.missing.slice(0, 2).map((m) => m.name).join("、"))}${status.missing.length > 2 ? "等" : ""} 不足</div>` : ""}
+        <div class="actions recipe-menu-actions">
+          <button data-action="add-today" data-id="${recipeItem.id}" type="button" ${inToday ? "disabled" : ""}>${inToday ? "已加入" : "加入今日"}</button>
+          ${status.missing.length ? `<button class="ghost" data-action="add-missing-shopping" data-id="${recipeItem.id}" type="button">加购物清单</button>` : ""}
+        </div>
+      </div>
+    </article>
   `;
 }
 
@@ -873,23 +952,31 @@ function renderFridge() {
 }
 
 function renderShopping() {
+  const checkedCount = state.data.shoppingList.filter((item) => item.checked).length;
   return `
     <section class="panel">
       <div class="actions" style="justify-content:space-between">
         <h2>购物清单</h2>
-        <div class="actions"><button data-action="open-shopping-form" type="button">新增购物项</button><button class="success" data-action="apply-shopping" type="button">已购买入库</button></div>
+        <div class="actions"><button data-action="open-shopping-form" type="button">新增购物项</button><button class="success" data-action="apply-shopping" type="button" ${checkedCount ? "" : "disabled"}>已购买入库${checkedCount ? ` ${checkedCount}` : ""}</button></div>
       </div>
-      <table class="table">
-        <thead><tr><th>完成</th><th>食材</th><th>数量</th><th>操作</th></tr></thead>
-        <tbody>${state.data.shoppingList.map((item) => `
-          <tr>
-            <td><input class="shopping-check" data-id="${item.id}" type="checkbox" ${item.checked ? "checked" : ""}></td>
-            <td>${escapeHtml(item.name)}</td>
-            <td>${item.count}${escapeHtml(item.unit)}</td>
-            <td><button class="ghost" data-action="open-shopping-form" data-id="${item.id}" type="button">编辑</button> <button class="danger" data-action="delete-shopping" data-id="${item.id}" type="button">删除</button></td>
-          </tr>
-        `).join("") || `<tr><td colspan="4" class="muted">暂无购物项</td></tr>`}</tbody>
-      </table>
+      <div class="shopping-list">
+        ${state.data.shoppingList.map((item) => `
+          <article class="shopping-item ${item.checked ? "checked" : ""}">
+            <label class="shopping-toggle">
+              <input class="shopping-check" data-id="${item.id}" type="checkbox" ${item.checked ? "checked" : ""}>
+              <span aria-hidden="true"></span>
+            </label>
+            <div class="shopping-main">
+              <strong>${escapeHtml(item.name)}</strong>
+              <em>${item.count}${escapeHtml(item.unit)}</em>
+            </div>
+            <div class="actions shopping-actions">
+              <button class="ghost" data-action="open-shopping-form" data-id="${item.id}" type="button">编辑</button>
+              <button class="danger" data-action="delete-shopping" data-id="${item.id}" type="button">删除</button>
+            </div>
+          </article>
+        `).join("") || `<div class="empty">暂无购物项</div>`}
+      </div>
     </section>
   `;
 }
@@ -943,6 +1030,21 @@ function renderIngredients() {
   `;
 }
 
+function renderTags() {
+  return `
+    <section class="panel">
+      <div class="actions" style="justify-content:space-between"><h2>标签列表</h2><button data-action="open-tag-form" type="button">新增标签</button></div>
+      <table class="table"><thead><tr><th>名称</th><th>菜谱数</th><th>操作</th></tr></thead><tbody>${state.data.tags.map((tag) => `
+        <tr>
+          <td>${escapeHtml(tag.name)}</td>
+          <td>${state.data.recipes.filter((recipeItem) => recipeItem.tags.includes(tag.name)).length}</td>
+          <td><button class="ghost" data-action="open-tag-form" data-id="${tag.id}" type="button">编辑</button> <button class="danger" data-action="delete-tag" data-id="${tag.id}" type="button">删除</button></td>
+        </tr>
+      `).join("") || `<tr><td colspan="3" class="muted">暂无标签</td></tr>`}</tbody></table>
+    </section>
+  `;
+}
+
 function categoryOptions(selected = "") {
   return state.data.categories.map((cat) => `<option value="${cat.id}" ${cat.id === selected ? "selected" : ""}>${escapeHtml(cat.name)}</option>`).join("");
 }
@@ -965,9 +1067,9 @@ function recipeForm(recipeItem) {
     coverColor: "#1769e0",
     tags: [],
     difficulty: "简单",
-    favorite: false,
     steps: [step("", 0, [])]
   };
+  const tags = state.data.tags.map((tag) => tag.name);
   return `
     <form id="recipeForm">
       <input name="id" type="hidden" value="${escapeHtml(data.id)}">
@@ -975,12 +1077,11 @@ function recipeForm(recipeItem) {
         <label>菜名<input name="name" required value="${escapeHtml(data.name)}"></label>
         <label>难度<select name="difficulty">${difficulties.map((d) => `<option ${d === data.difficulty ? "selected" : ""}>${d}</option>`).join("")}</select></label>
         <label>标识颜色<input name="coverColor" type="color" value="${escapeHtml(data.coverColor)}"></label>
-        <label>收藏<select name="favorite"><option value="false">否</option><option value="true" ${data.favorite ? "selected" : ""}>是</option></select></label>
         <label class="full">描述<textarea name="desc">${escapeHtml(data.desc)}</textarea></label>
         <div class="full">
           <label>标签</label>
           <div class="choice-grid">
-            ${commonTags.map((tag) => `<label class="choice-pill"><input name="tags" type="checkbox" value="${tag}" ${data.tags.includes(tag) ? "checked" : ""}>${tag}</label>`).join("")}
+            ${tags.map((tag) => `<label class="choice-pill"><input name="tags" type="checkbox" value="${tag}" ${data.tags.includes(tag) ? "checked" : ""}>${tag}</label>`).join("") || `<span class="muted">请先在标签管理中新增标签</span>`}
           </div>
         </div>
         <label class="full">菜品图片<input name="imageFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
@@ -1206,7 +1307,6 @@ function parseRecipeForm(form) {
     coverColor: fd.get("coverColor") || "#1769e0",
     tags: fd.getAll("tags").map((t) => t.toString().trim()).filter(Boolean),
     difficulty: fd.get("difficulty"),
-    favorite: fd.get("favorite") === "true",
     steps
   };
 }
@@ -1247,6 +1347,11 @@ document.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (action === "set-recipe-tag") {
+    state.filters.recipeTag = btn.dataset.tag || "";
+    render();
+    return;
+  }
   if (action === "confirm-modal") {
     const fn = state.modal?.onConfirm;
     state.modal = null;
@@ -1270,12 +1375,6 @@ document.addEventListener("click", (event) => {
     state.mode = "admin";
     state.page = "recipeAdmin";
     state.modal = { type: "recipeForm" };
-  }
-  if (action === "toggle-favorite") {
-    const r = recipeById(id);
-    r.favorite = !r.favorite;
-    saveAndRender(r.favorite ? "已收藏" : "已取消收藏");
-    return;
   }
   if (action === "add-today") return askMealAndAdd(id);
   if (action === "add-missing-shopping") return addMissingToShopping(id);
@@ -1326,6 +1425,11 @@ document.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (action === "open-tag-form") {
+    state.modal = { type: "tagForm", id: id || "" };
+    render();
+    return;
+  }
   if (action === "open-ingredient-form") {
     state.modal = { type: "ingredientForm", id: id || "" };
     render();
@@ -1343,11 +1447,6 @@ document.addEventListener("click", (event) => {
   }
   if (action === "open-recipe-form") {
     state.modal = { type: "recipeForm", id: id || "" };
-    render();
-    return;
-  }
-  if (action === "toggle-favorite-filter") {
-    state.filters.recipeFavorite = !state.filters.recipeFavorite;
     render();
     return;
   }
@@ -1369,6 +1468,19 @@ document.addEventListener("click", (event) => {
     if (state.data.ingredients.some((ing) => ing.categoryId === id)) return showToast("分类下还有食材，不能删除");
     state.data.categories = state.data.categories.filter((cat) => cat.id !== id);
     saveAndRender("已删除分类");
+    return;
+  }
+  if (action === "delete-tag") {
+    const tag = tagById(id);
+    if (!tag) return;
+    openConfirm("删除标签", "删除后会同步从已有菜谱中移除该标签。", () => {
+      state.data.tags = state.data.tags.filter((item) => item.id !== id);
+      state.data.recipes.forEach((recipeItem) => {
+        recipeItem.tags = recipeItem.tags.filter((name) => name !== tag.name);
+      });
+      if (state.filters.recipeTag === tag.name) state.filters.recipeTag = "";
+      saveAndRender("已删除标签");
+    }, "删除");
     return;
   }
   if (action === "delete-ingredient") {
@@ -1467,7 +1579,7 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("dblclick", (event) => {
-  const recipe = event.target.closest(".card[data-action='view-recipe']");
+  const recipe = event.target.closest(".card[data-action='view-recipe'], .recipe-menu-item[data-action='view-recipe']");
   if (recipe && !event.target.closest("button")) {
     state.modal = { type: "recipeDetail", recipeId: recipe.dataset.id };
     render();
@@ -1534,8 +1646,10 @@ document.addEventListener("change", (event) => {
   const target = event.target;
   if (target.classList.contains("shopping-check")) {
     const item = state.data.shoppingList.find((s) => s.id === target.dataset.id);
+    if (!item) return;
     item.checked = target.checked;
-    storage.save(state.data);
+    saveAndRender();
+    return;
   }
   if (target.name === "imageFile" && target.files[0]) {
     const file = target.files[0];
@@ -1577,6 +1691,28 @@ document.addEventListener("submit", (event) => {
     }
     state.modal = null;
     saveAndRender(id ? "已更新分类" : "已新增分类");
+  }
+  if (event.target.id === "tagForm") {
+    const fd = new FormData(event.target);
+    const id = fd.get("id");
+    const name = fd.get("name").toString().trim();
+    if (!name) return;
+    const duplicate = state.data.tags.some((item) => item.name === name && item.id !== id);
+    if (duplicate) return showToast("标签名称已存在");
+    if (id) {
+      const item = tagById(id);
+      if (!item) return showToast("标签不存在");
+      const oldName = item.name;
+      item.name = name;
+      state.data.recipes.forEach((recipeItem) => {
+        recipeItem.tags = recipeItem.tags.map((tag) => tag === oldName ? name : tag);
+      });
+      if (state.filters.recipeTag === oldName) state.filters.recipeTag = name;
+    } else {
+      state.data.tags.push(tagItem(name));
+    }
+    state.modal = null;
+    saveAndRender(id ? "已更新标签" : "已新增标签");
   }
   if (event.target.id === "ingredientForm") {
     const fd = new FormData(event.target);
