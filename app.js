@@ -50,6 +50,8 @@ let state = {
     recipeTag: "",
     recipeDifficulty: "",
     recipeTime: "",
+    recipeCanCook: "",
+    recommendCanCook: "",
     fridgeSearch: "",
     historySearch: "",
     ingredientAdminSearch: "",
@@ -525,7 +527,10 @@ function render() {
   document.querySelector("#frontTabs").classList.toggle("hidden", state.mode !== "front");
   document.querySelector("#adminTabs").classList.toggle("hidden", state.mode !== "admin");
   document.querySelectorAll(".page-tabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.page === state.page));
-  document.querySelector("#summaryText").innerHTML = summaryText();
+  const summary = document.querySelector("#summaryText");
+  const showSummary = state.mode === "front" && ["recommend", "fridge"].includes(state.page);
+  summary.classList.toggle("hidden", !showSummary);
+  if (showSummary) summary.innerHTML = summaryText();
 
   const pages = {
     recommend: renderRecommend,
@@ -788,8 +793,16 @@ function summaryText() {
 }
 
 function renderRecommend() {
-  const recipes = sortedRecipes(state.data.recipes);
+  const recipes = sortedRecipes(state.data.recipes.filter((item) => {
+    const status = recipeStatus(item);
+    if (!status.canCook && status.missing.length > 2) return false;
+    if (state.filters.recommendCanCook === "yes") return status.canCook;
+    return true;
+  }));
   return `
+    <section class="toolbar">
+      ${canCookFilter("recommendCanCook", state.filters.recommendCanCook)}
+    </section>
     <p class="notice">双击菜品卡片查看完整详情。</p>
     <section class="grid">
       ${recipes.map((item) => recipeCard(item, { compact: true })).join("") || `<div class="empty">还没有菜谱</div>`}
@@ -819,6 +832,15 @@ function renderToday() {
     <section class="today-grid">
       ${items.map((dish) => todayCard(dish)).join("") || `<div class="empty">这个餐次还没有菜品</div>`}
     </section>
+  `;
+}
+
+function canCookFilter(filterKey, value) {
+  return `
+    <div class="segmented" role="radiogroup" aria-label="是否可做">
+      <button class="${value ? "" : "active"}" data-action="set-can-cook-filter" data-filter-key="${filterKey}" data-value="" type="button">全部</button>
+      <button class="${value === "yes" ? "active" : ""}" data-action="set-can-cook-filter" data-filter-key="${filterKey}" data-value="yes" type="button">可做</button>
+    </div>
   `;
 }
 
@@ -896,7 +918,9 @@ function renderRecipes() {
     const matchDifficulty = !state.filters.recipeDifficulty || r.difficulty === state.filters.recipeDifficulty;
     const maxTime = Number(state.filters.recipeTime);
     const matchTime = !maxTime || totalTime(r) <= maxTime * 60;
-    return matchKeyword && matchTag && matchDifficulty && matchTime;
+    const status = recipeStatus(r);
+    const matchCanCook = !state.filters.recipeCanCook || status.canCook;
+    return matchKeyword && matchTag && matchDifficulty && matchTime && matchCanCook;
   });
   list = sortedRecipes(list);
   return `
@@ -905,7 +929,7 @@ function renderRecipes() {
         <input data-filter="recipeSearch" value="${escapeHtml(state.filters.recipeSearch)}" placeholder="搜索菜名或描述">
         <select data-filter="recipeDifficulty"><option value="">全部难度</option>${difficulties.map((d) => `<option ${d === state.filters.recipeDifficulty ? "selected" : ""}>${d}</option>`).join("")}</select>
         <select data-filter="recipeTime"><option value="">不限耗时</option><option value="15" ${state.filters.recipeTime === "15" ? "selected" : ""}>15 分钟内</option><option value="30" ${state.filters.recipeTime === "30" ? "selected" : ""}>30 分钟内</option><option value="60" ${state.filters.recipeTime === "60" ? "selected" : ""}>60 分钟内</option></select>
-        <button data-action="go-admin-recipe" type="button">新增菜谱</button>
+        ${canCookFilter("recipeCanCook", state.filters.recipeCanCook)}
       </div>
       <div class="recipe-shop-body">
         <aside class="recipe-cats" aria-label="菜谱标签">
@@ -957,7 +981,8 @@ function renderFridge() {
     state.activeFridgeCategoryId = categories[0]?.id || "";
   }
   const activeCategory = categoryById(state.activeFridgeCategoryId);
-  const items = state.data.ingredients.filter((ing) => ing.categoryId === state.activeFridgeCategoryId && (!keyword || ing.name.includes(keyword)));
+  const visibleFridgeItems = state.data.ingredients.filter((ing) => hasStock(ing));
+  const items = visibleFridgeItems.filter((ing) => ing.categoryId === state.activeFridgeCategoryId && (!keyword || ing.name.includes(keyword)));
   const warningItems = state.data.ingredients
     .filter((ing) => hasStock(ing) && ["soon", "expired"].includes(expireState(ing)))
     .sort((a, b) => (daysUntilExpire(a) ?? 9999) - (daysUntilExpire(b) ?? 9999));
@@ -988,7 +1013,7 @@ function renderFridge() {
       <div class="fridge-shop-body">
         <aside class="fridge-cats" aria-label="冰箱分类">
           ${categories.map((cat) => {
-            const count = state.data.ingredients.filter((ing) => ing.categoryId === cat.id).length;
+            const count = visibleFridgeItems.filter((ing) => ing.categoryId === cat.id).length;
             return `<button class="${state.activeFridgeCategoryId === cat.id ? "active" : ""}" data-action="switch-fridge-category" data-id="${cat.id}" type="button">${escapeHtml(cat.name)}<span>${count}</span></button>`;
           }).join("") || `<span class="muted">暂无分类</span>`}
         </aside>
@@ -1045,6 +1070,7 @@ function renderShopping() {
 function renderHistory() {
   const keyword = state.filters.historySearch.trim();
   const list = state.data.cookHistory.filter((h) => !keyword || h.recipeName.includes(keyword)).slice().reverse();
+  const ranking = cookRanking(list);
   const groups = list.reduce((result, item) => {
     const key = formatDateKey(item.cookedAt);
     if (!result[key]) result[key] = [];
@@ -1053,6 +1079,7 @@ function renderHistory() {
   }, {});
   return `
     <section class="toolbar"><input style="max-width:320px" data-filter="historySearch" value="${escapeHtml(state.filters.historySearch)}" placeholder="搜索历史菜名"></section>
+    ${renderCookStats(ranking)}
     <section class="history-groups">
       ${Object.entries(groups).map(([date, items]) => `
         <article class="history-day">
@@ -1073,6 +1100,40 @@ function renderHistory() {
           </div>
         </article>
       `).join("") || `<div class="empty">暂无历史</div>`}
+    </section>
+  `;
+}
+
+function cookRanking(list) {
+  const counts = list.reduce((result, item) => {
+    const name = item.recipeName || "未知菜品";
+    result[name] = (result[name] || 0) + 1;
+    return result;
+  }, {});
+  return Object.entries(counts)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans-CN"));
+}
+
+function renderCookStats(ranking) {
+  if (!ranking.length) return "";
+  const max = ranking[0].count || 1;
+  return `
+    <section class="panel cook-stats">
+      <div class="actions" style="justify-content:space-between">
+        <h2>做菜次数排名</h2>
+        <span class="muted">共 ${ranking.reduce((sum, item) => sum + item.count, 0)} 次</span>
+      </div>
+      <div class="rank-list">
+        ${ranking.slice(0, 8).map((item, index) => `
+          <div class="rank-item">
+            <span class="rank-no">${index + 1}</span>
+            <strong>${escapeHtml(item.name)}</strong>
+            <div class="rank-bar"><span style="width:${Math.max(8, Math.round((item.count / max) * 100))}%"></span></div>
+            <em>${item.count} 次</em>
+          </div>
+        `).join("")}
+      </div>
     </section>
   `;
 }
@@ -1471,6 +1532,11 @@ document.addEventListener("click", (event) => {
   }
   if (action === "set-recipe-tag") {
     state.filters.recipeTag = btn.dataset.tag || "";
+    render();
+    return;
+  }
+  if (action === "set-can-cook-filter") {
+    state.filters[btn.dataset.filterKey] = btn.dataset.value || "";
     render();
     return;
   }
