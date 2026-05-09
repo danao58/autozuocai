@@ -325,7 +325,7 @@ function recipeStatus(recipeItem) {
         unit: ing ? ing.unit : ""
       });
     }
-    if (ing && expireState(ing) === "soon") expiring.push(ing.name);
+    if (ing && stock > 0 && expireState(ing) === "soon") expiring.push(ing.name);
   });
   return { canCook: missing.length === 0, missing, expiring };
 }
@@ -373,6 +373,10 @@ function expireState(ingredient) {
   return "ok";
 }
 
+function hasStock(ingredient) {
+  return Number(ingredient?.stock) > 0;
+}
+
 function expireWarningDays() {
   return Math.max(0, Number(state.data.meta.expireWarningDays) || 0);
 }
@@ -391,6 +395,14 @@ function expireBadge(ingredient) {
   if (status === "expired") return `<span class="status bad">已过期 ${Math.abs(days)} 天</span>`;
   if (status === "soon") return `<span class="status warn">临期 ${days} 天</span>`;
   return ingredient.expireAt ? `<span class="status ok">新鲜</span>` : `<span class="tag">未设置</span>`;
+}
+
+function expireText(ingredient) {
+  const status = expireState(ingredient);
+  const days = daysUntilExpire(ingredient);
+  if (status === "expired") return `过期 ${Math.abs(days)} 天`;
+  if (status === "soon") return `临期 ${days} 天`;
+  return "新鲜";
 }
 
 function imageHtml(recipeItem) {
@@ -464,6 +476,10 @@ function recipeCard(recipeItem, options = {}) {
 }
 
 function render() {
+  if (isMobileView() && state.mode !== "front") {
+    state.mode = "front";
+    state.page = "recommend";
+  }
   document.querySelectorAll(".mode-tabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === state.mode));
   renderPageTabs();
   document.querySelector("#frontTabs").classList.toggle("hidden", state.mode !== "front");
@@ -490,6 +506,13 @@ function renderPageTabs() {
   const build = (pages) => pages.map((page) => `<button draggable="true" data-page="${page}" type="button" title="拖动调整排序">${pageLabels[page]}</button>`).join("");
   document.querySelector("#frontTabs").innerHTML = build(state.data.meta.frontPageOrder);
   document.querySelector("#adminTabs").innerHTML = build(state.data.meta.adminPageOrder);
+  document.querySelector("#mobileFrontTabs").innerHTML = state.data.meta.frontPageOrder
+    .map((page) => `<button class="${state.mode === "front" && state.page === page ? "active" : ""}" data-page="${page}" type="button">${pageLabels[page]}</button>`)
+    .join("");
+}
+
+function isMobileView() {
+  return window.matchMedia("(max-width: 820px)").matches;
 }
 
 function renderModal() {
@@ -554,7 +577,7 @@ function renderModal() {
           <form id="categoryForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>分类名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
-            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px"><button data-action="save-shopping-form" type="button">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "分类表单", "compact");
   }
@@ -644,20 +667,16 @@ function mealHint(value) {
 
 function summaryText() {
   const canCook = state.data.recipes.filter((item) => recipeStatus(item).canCook).length;
-  const expiring = state.data.ingredients.filter((item) => expireState(item) === "soon").length;
-  const expired = state.data.ingredients.filter((item) => expireState(item) === "expired").length;
-  const today = state.data.todayDishes.length;
+  const expiring = state.data.ingredients.filter((item) => hasStock(item) && expireState(item) === "soon").length;
+  const expired = state.data.ingredients.filter((item) => hasStock(item) && expireState(item) === "expired").length;
   const shoppingOpen = state.data.shoppingList.filter((item) => !item.checked).length;
   const lowStock = state.data.ingredients.filter((item) => Number(item.stock) <= 0).length;
-  const lastCook = state.data.cookHistory.at(-1)?.recipeName || "暂无";
   const metrics = [
     { label: "可做", value: `${canCook}/${state.data.recipes.length}`, tone: canCook ? "ok" : "bad" },
     { label: "临期", value: `${expiring}`, tone: expiring ? "warn" : "ok" },
     { label: "过期", value: `${expired}`, tone: expired ? "bad" : "ok" },
-    { label: "今日计划", value: `${today}`, tone: today ? "info" : "" },
     { label: "待购买", value: `${shoppingOpen}`, tone: shoppingOpen ? "warn" : "" },
-    { label: "缺库存", value: `${lowStock}`, tone: lowStock ? "bad" : "ok" },
-    { label: "最近做", value: lastCook, tone: "wide" }
+    { label: "缺库存", value: `${lowStock}`, tone: lowStock ? "bad" : "ok" }
   ];
   return metrics.map((item) => `
     <span class="metric ${item.tone}">
@@ -707,7 +726,7 @@ function todayCard(dish) {
   if (!recipeItem) return "";
   const status = recipeStatus(recipeItem);
   return `
-    <article class="card">
+    <article class="card today-card">
       ${imageHtml(recipeItem)}
       <div class="card-body">
         <h3>${escapeHtml(recipeItem.name)}</h3>
@@ -715,6 +734,7 @@ function todayCard(dish) {
         <p>${missingHtml(status.missing)}</p>
         <div class="actions">
           <button data-action="start-cooking" data-id="${dish.id}" type="button">开始制作</button>
+          ${status.missing.length ? `<button class="ghost" data-action="add-today-missing-shopping" data-id="${dish.id}" type="button">缺食材加购物车</button>` : ""}
           <button class="danger" data-action="remove-today" data-id="${dish.id}" type="button">移除</button>
         </div>
       </div>
@@ -804,7 +824,7 @@ function renderFridge() {
   const activeCategory = categoryById(state.activeFridgeCategoryId);
   const items = state.data.ingredients.filter((ing) => ing.categoryId === state.activeFridgeCategoryId && (!keyword || ing.name.includes(keyword)));
   const warningItems = state.data.ingredients
-    .filter((ing) => ["soon", "expired"].includes(expireState(ing)))
+    .filter((ing) => hasStock(ing) && ["soon", "expired"].includes(expireState(ing)))
     .sort((a, b) => (daysUntilExpire(a) ?? 9999) - (daysUntilExpire(b) ?? 9999));
   return `
     <section class="toolbar">
@@ -822,11 +842,9 @@ function renderFridge() {
       <div class="warning-list">
         ${warningItems.map((ing) => `
           <article class="warning-item ${expireState(ing)}" data-action="edit-fridge" data-id="${ing.id}" title="双击修改库存和保质期">
-            <div>
-              <strong>${escapeHtml(ing.name)}</strong>
-              <p class="muted">${escapeHtml(categoryById(ing.categoryId)?.name || "未分类")} · ${ing.stock}${escapeHtml(ing.unit)} · ${escapeHtml(ing.expireAt)}</p>
-            </div>
-            ${expireBadge(ing)}
+            <strong>${escapeHtml(ing.name)}</strong>
+            <span>${expireText(ing)}</span>
+            <em>${ing.stock}${escapeHtml(ing.unit)}</em>
           </article>
         `).join("") || `<div class="empty">暂无临期或过期食材</div>`}
       </div>
@@ -1054,6 +1072,17 @@ function addMissingToShopping(recipeId) {
   saveAndRender("缺少食材已加入购物清单");
 }
 
+function addTodayMissingToShopping(dishId) {
+  const dish = state.data.todayDishes.find((item) => item.id === dishId);
+  if (!dish) return showToast("今日菜品不存在");
+  const recipeItem = recipeById(dish.recipeId);
+  if (!recipeItem) return showToast("菜谱不存在");
+  const missing = recipeStatus(recipeItem).missing;
+  if (!missing.length) return showToast("这道菜不缺食材");
+  missing.forEach((m) => mergeShopping(m));
+  saveAndRender("缺少食材已加入购物清单");
+}
+
 function mergeShopping(item) {
   const existing = state.data.shoppingList.find((s) => s.ingredientId === item.ingredientId);
   if (existing) {
@@ -1069,6 +1098,37 @@ function mergeShopping(item) {
       checked: false
     });
   }
+}
+
+function saveShoppingForm(form) {
+  const fd = new FormData(form);
+  const ing = ingredientById(fd.get("ingredientId"));
+  if (!ing) {
+    showToast("请选择食材");
+    return;
+  }
+  const count = Number(fd.get("count"));
+  if (!Number.isFinite(count) || count <= 0) {
+    showToast("数量必须大于 0");
+    return;
+  }
+  const id = fd.get("id");
+  if (id) {
+    const item = state.data.shoppingList.find((s) => s.id === id);
+    if (!item) {
+      showToast("购物项不存在");
+      return;
+    }
+    item.ingredientId = ing.id;
+    item.name = ing.name;
+    item.count = count;
+    item.unit = ing.unit;
+    item.checked = false;
+  } else {
+    mergeShopping({ ingredientId: ing.id, name: ing.name, count, unit: ing.unit });
+  }
+  state.modal = null;
+  saveAndRender(id ? "已更新购物项" : "已加入购物清单");
 }
 
 function startCooking(dishId) {
@@ -1200,6 +1260,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (page) {
+    if (btn.closest("#mobileFrontTabs")) state.mode = "front";
     state.page = page;
     render();
     return;
@@ -1218,6 +1279,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "add-today") return askMealAndAdd(id);
   if (action === "add-missing-shopping") return addMissingToShopping(id);
+  if (action === "add-today-missing-shopping") return addTodayMissingToShopping(id);
   if (action === "view-recipe") {
     state.modal = { type: "recipeDetail", recipeId: id };
     render();
@@ -1272,6 +1334,11 @@ document.addEventListener("click", (event) => {
   if (action === "open-shopping-form") {
     state.modal = { type: "shoppingForm", id: id || "" };
     render();
+    return;
+  }
+  if (action === "save-shopping-form") {
+    const form = btn.closest("form");
+    if (form) saveShoppingForm(form);
     return;
   }
   if (action === "open-recipe-form") {
@@ -1529,20 +1596,7 @@ document.addEventListener("submit", (event) => {
     saveAndRender(id ? "已更新食材" : "已新增食材");
   }
   if (event.target.id === "shoppingForm") {
-    const fd = new FormData(event.target);
-    const ing = ingredientById(fd.get("ingredientId"));
-    const id = fd.get("id");
-    if (id) {
-      const item = state.data.shoppingList.find((s) => s.id === id);
-      item.ingredientId = ing.id;
-      item.name = ing.name;
-      item.count = Number(fd.get("count")) || 1;
-      item.unit = ing.unit;
-    } else {
-      mergeShopping({ ingredientId: ing.id, name: ing.name, count: Number(fd.get("count")) || 1, unit: ing.unit });
-    }
-    state.modal = null;
-    saveAndRender(id ? "已更新购物项" : "已加入购物清单");
+    saveShoppingForm(event.target);
   }
   if (event.target.id === "fridgeForm") {
     const fd = new FormData(event.target);
