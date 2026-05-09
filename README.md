@@ -19,7 +19,10 @@ Vercel 部署时需要配置环境变量：
 
 ```txt
 DATABASE_URL=postgresql://postgres:你的密码@db.wrpduaofxopoiqdumhyz.supabase.co:5432/postgres
+GEMINI_API_KEY=你的 Google AI Studio API Key
 ```
+
+`GEMINI_API_KEY` 用于后台“菜谱模板导入”的 AI 解析功能。可以使用 Google AI Studio 的 Gemini API 免费层，免费层有请求频率限制，适合后台偶尔把文字或链接整理成菜谱 JSON 模板。AI Key 只放在 Vercel 环境变量里，不要写进前端文件。
 
 首次使用 Supabase 时，先在 SQL Editor 执行 `database/schema.sql`。
 
@@ -34,6 +37,7 @@ DATABASE_URL=postgresql://postgres:你的密码@db.wrpduaofxopoiqdumhyz.supabase
 - 购物清单：缺少食材一键加入，已购买项可入库。
 - 做菜历史：制作完成后自动记录。
 - 后台管理：食材分类、食材、菜谱增删改查。
+- 菜谱模板导入：可复制带填写说明的 JSON 模板，也可直接填写文字或链接，由服务端调用 Gemini 免费 API 生成模板后导入；模板内说明了难度、时间和可用食材单位。
 - 菜谱图片：支持上传、预览、替换、删除。
 - 备份恢复：支持导出、导入、复制备份文本和重置示例数据。
 
@@ -55,5 +59,6 @@ DATABASE_URL=postgresql://postgres:你的密码@db.wrpduaofxopoiqdumhyz.supabase
 - `PUT/DELETE /api/shopping?id=:id`
 - `GET /api/snapshot`
 - `POST /api/migrate-json`
+- `POST /api/ai-recipe`
 
 `/api/data` 作为兼容聚合接口保留，内部已经读写拆分后的 Supabase 表。

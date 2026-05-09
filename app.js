@@ -5,6 +5,46 @@ const PENDING_REMOTE_SAVE_KEY = `${STORE_KEY}_pending_remote_save`;
 const REMOTE_SAVE_TIMEOUT = 8000;
 const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
 const DEFAULT_RECIPE_IMAGE = "defalut.png";
+const RECIPE_IMPORT_TEMPLATE = {
+  instructions: {
+    usage: "请把文字菜谱或视频内容解析成 recipes 数组。只输出合法 JSON，不要输出 Markdown。",
+    difficultyOptions: ["简单", "中等", "复杂"],
+    unitOptions: ["个", "克", "斤", "把", "颗", "片", "瓣", "勺", "碗", "份", "毫升"],
+    timeField: "每个步骤用 timeMinutes 填写分钟数；不需要计时填 0。",
+    ingredientRule: "consumes 里的 name 要写食材名称，count 写数字，unit 必须优先从 unitOptions 中选择；系统没有的食材会自动新增，库存默认为 0。"
+  },
+  recipes: [
+    {
+      name: "番茄炒蛋",
+      desc: "酸甜下饭的家常快手菜",
+      difficulty: "简单",
+      tags: ["快手菜", "家常", "下饭"],
+      imageUrl: "",
+      steps: [
+        {
+          content: "鸡蛋打散，番茄切块。",
+          timeMinutes: 0,
+          consumes: [
+            { name: "鸡蛋", count: 2, unit: "个" },
+            { name: "番茄", count: 2, unit: "个" }
+          ]
+        },
+        {
+          content: "热锅倒油，先炒鸡蛋后盛出。",
+          timeMinutes: 2,
+          consumes: [
+            { name: "食用油", count: 1, unit: "勺" }
+          ]
+        }
+      ],
+      source: {
+        type: "text",
+        url: "",
+        note: "可填写原始文字、视频链接或 AI 解析说明"
+      }
+    }
+  ]
+};
 const CONFIG = window.APP_CONFIG || {};
 const mealLabels = {
   breakfast: "早餐",
@@ -69,7 +109,7 @@ let state = {
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
-window.COOKBOOK_APP_BUILD = "20260509-savefix-10";
+window.COOKBOOK_APP_BUILD = "20260509-ai-recipe-1";
 
 const storage = {
   loadLocal() {
@@ -212,7 +252,19 @@ function createDemoData() {
     { id: "ing_onion", name: "洋葱", categoryId: "cat_veg", stock: 1, unit: "个", expireAt: plus(10) },
     { id: "ing_garlic", name: "大蒜", categoryId: "cat_spice", stock: 8, unit: "瓣", expireAt: "" },
     { id: "ing_soy", name: "生抽", categoryId: "cat_spice", stock: 10, unit: "勺", expireAt: "" },
-    { id: "ing_oil", name: "食用油", categoryId: "cat_spice", stock: 10, unit: "勺", expireAt: "" }
+    { id: "ing_oil", name: "食用油", categoryId: "cat_spice", stock: 10, unit: "勺", expireAt: "" },
+    { id: "ing_crawfish", name: "小龙虾", categoryId: "cat_meat", stock: 0, unit: "斤", expireAt: "" },
+    { id: "ing_ginger", name: "生姜", categoryId: "cat_spice", stock: 0, unit: "片", expireAt: "" },
+    { id: "ing_chili", name: "干辣椒", categoryId: "cat_spice", stock: 0, unit: "颗", expireAt: "" },
+    { id: "ing_pepper", name: "花椒", categoryId: "cat_spice", stock: 0, unit: "勺", expireAt: "" },
+    { id: "ing_star_anise", name: "八角", categoryId: "cat_spice", stock: 0, unit: "颗", expireAt: "" },
+    { id: "ing_cinnamon", name: "桂皮", categoryId: "cat_spice", stock: 0, unit: "片", expireAt: "" },
+    { id: "ing_bay_leaf", name: "香叶", categoryId: "cat_spice", stock: 0, unit: "片", expireAt: "" },
+    { id: "ing_dark_soy", name: "老抽", categoryId: "cat_spice", stock: 0, unit: "勺", expireAt: "" },
+    { id: "ing_cooking_wine", name: "料酒", categoryId: "cat_spice", stock: 0, unit: "勺", expireAt: "" },
+    { id: "ing_salt", name: "食盐", categoryId: "cat_spice", stock: 0, unit: "勺", expireAt: "" },
+    { id: "ing_sugar", name: "白糖", categoryId: "cat_spice", stock: 0, unit: "勺", expireAt: "" },
+    { id: "ing_scallion", name: "葱花", categoryId: "cat_veg", stock: 0, unit: "把", expireAt: "" }
   ];
   const recipes = [
     recipe("rec_egg_tomato", "番茄炒蛋", "酸甜下饭的家常快手菜", "#f97316", ["快手菜", "家常", "下饭"], "简单", true, [
@@ -238,6 +290,15 @@ function createDemoData() {
     recipe("rec_garlic_green", "蒜蓉青菜", "清爽的素菜搭配", "#0891b2", ["素菜", "快手菜", "低脂"], "简单", false, [
       step("青菜洗净，大蒜切末。", 0, [["ing_green", 1], ["ing_garlic", 2]]),
       step("爆香蒜末，加入青菜快炒。", 180, [["ing_oil", 1], ["ing_soy", 1]])
+    ]),
+    recipe("rec_crawfish_clear_braise", "清水焖小龙虾（不过油不腥版）", "不用过油，做法像煮火锅一样简单，去腥入味超好吃", "#dc2626", ["家常菜", "夜宵", "小龙虾", "快手菜"], "简单", false, [
+      step("小龙虾剪去虾头尖、去虾须虾脚，洗净备用。", 300, [["ing_crawfish", 2]]),
+      step("准备姜片、蒜瓣、干辣椒、花椒、八角、桂皮、香叶备用。", 0, [["ing_ginger", 5], ["ing_garlic", 8], ["ing_chili", 10], ["ing_pepper", 1], ["ing_star_anise", 2], ["ing_cinnamon", 1], ["ing_bay_leaf", 3]]),
+      step("锅中放少许油，下所有香料小火炒出香味。", 180, [["ing_oil", 1]]),
+      step("倒入小龙虾大火翻炒至虾身变红。", 240, []),
+      step("加生抽、老抽、料酒、盐、白糖调味，倒入没过小龙虾的热水。", 0, [["ing_soy", 2], ["ing_dark_soy", 1], ["ing_cooking_wine", 2], ["ing_salt", 1], ["ing_sugar", 1]]),
+      step("盖上锅盖，中火焖煮 15 分钟入味。", 900, []),
+      step("开盖大火收浓汤汁，撒葱花即可出锅。", 180, [["ing_scallion", 1]])
     ])
   ];
   return normalizeData({
@@ -805,6 +866,26 @@ function renderModal() {
             ${recipeForm(item)}
           </div>
     `, "菜谱表单", "wide");
+  }
+  if (modal.type === "recipeImport") {
+    return modalShell(`
+          <div class="modal-body">
+            <div class="actions" style="justify-content:space-between">
+              <h2>导入菜谱模板</h2>
+              <button class="ghost" data-action="close-modal" type="button">关闭</button>
+            </div>
+            <p class="muted">可以直接填文字、菜谱链接或视频链接，让 AI 生成下面的 JSON 模板；也可以复制空模板给外部 AI 填写后再粘贴导入。</p>
+            <label>文字或链接<textarea id="recipeAiInput" class="short-textarea" placeholder="粘贴菜谱文字、小红书/抖音/B站等链接，或视频文案"></textarea></label>
+            <div class="actions" style="margin:12px 0">
+              <button data-action="ai-recipe-template" type="button">AI 解析成模板</button>
+              <button data-action="copy-recipe-template" type="button">复制模板</button>
+            </div>
+            <label>菜谱 JSON<textarea id="recipeImportText" placeholder="粘贴 AI 填好的菜谱模板 JSON"></textarea></label>
+            <div class="actions" style="margin-top:12px">
+              <button data-action="import-recipe-template" type="button">导入菜谱</button>
+            </div>
+          </div>
+    `, "导入菜谱模板", "wide");
   }
   if (modal.type === "warningSettings") {
     return modalShell(`
@@ -1412,7 +1493,13 @@ function renderRecipeAdmin() {
   }));
   return `
     <section class="panel">
-      <div class="actions" style="justify-content:space-between"><h2>菜谱列表</h2><button data-action="open-recipe-form" type="button">新增菜谱</button></div>
+      <div class="actions" style="justify-content:space-between">
+        <h2>菜谱列表</h2>
+        <div class="actions">
+          <button data-action="open-recipe-import" type="button">模板导入</button>
+          <button data-action="open-recipe-form" type="button">新增菜谱</button>
+        </div>
+      </div>
       <div class="admin-filters">
         <input data-filter="recipeAdminSearch" value="${escapeHtml(state.filters.recipeAdminSearch)}" placeholder="搜索菜名或描述">
         <select data-filter="recipeAdminTag"><option value="">全部标签</option>${tags.map((tag) => `<option value="${tag}" ${tag === activeTag ? "selected" : ""}>${escapeHtml(tag)}</option>`).join("")}</select>
@@ -1823,6 +1910,130 @@ function parseRecipeForm(form) {
   };
 }
 
+function recipeImportTemplateText() {
+  return JSON.stringify(RECIPE_IMPORT_TEMPLATE, null, 2);
+}
+
+async function generateRecipeTemplateFromAi() {
+  const input = document.querySelector("#recipeAiInput")?.value.trim() || "";
+  const target = document.querySelector("#recipeImportText");
+  if (!input) {
+    showToast("请先填写菜谱文字或链接");
+    return;
+  }
+  showToast("AI 正在解析菜谱");
+  const response = await fetch(`${CONFIG.apiBase || "/api"}/ai-recipe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "AI 解析失败");
+  if (target) target.value = JSON.stringify(data, null, 2);
+  showToast("AI 模板已生成，请检查后导入");
+}
+
+function importRecipeTemplateText(text) {
+  const parsed = JSON.parse(text);
+  const recipes = Array.isArray(parsed) ? parsed : Array.isArray(parsed.recipes) ? parsed.recipes : [parsed];
+  if (!recipes.length) throw new Error("模板中没有菜谱");
+  ensureDefaultCategory();
+  const imported = recipes.map((item) => recipeFromTemplate(item));
+  imported.forEach((item) => {
+    const index = state.data.recipes.findIndex((r) => r.name === item.name);
+    if (index >= 0) state.data.recipes[index] = item;
+    else state.data.recipes.push(item);
+  });
+  state.modal = null;
+  state.mode = "admin";
+  state.page = "recipeAdmin";
+  persistAndRender(`已导入 ${imported.length} 个菜谱`);
+}
+
+function ensureDefaultCategory() {
+  if (state.data.categories.length) return state.data.categories[0];
+  const category = { id: uid("cat"), name: "默认分类" };
+  state.data.categories.push(category);
+  return category;
+}
+
+function recipeFromTemplate(item) {
+  const name = item.name?.toString().trim();
+  if (!name) throw new Error("菜名必填");
+  const steps = Array.isArray(item.steps) ? item.steps.map((stepItem) => stepFromTemplate(stepItem)).filter(Boolean) : [];
+  if (!steps.length) throw new Error(`${name} 至少需要一个步骤`);
+  const tags = normalizeTemplateTags(item.tags);
+  tags.forEach((tag) => ensureTag(tag));
+  return {
+    id: uid("rec"),
+    name,
+    desc: item.desc?.toString().trim() || item.description?.toString().trim() || "",
+    image: templateImage(item),
+    coverColor: item.coverColor || "#1769e0",
+    tags,
+    difficulty: difficulties.includes(item.difficulty) ? item.difficulty : "简单",
+    favorite: Boolean(item.favorite),
+    steps
+  };
+}
+
+function normalizeTemplateTags(tags) {
+  const values = Array.isArray(tags) ? tags : typeof tags === "string" ? tags.split(/[，,、\s]+/) : [];
+  return values.map((tag) => tag.toString().trim()).filter(Boolean);
+}
+
+function ensureTag(name) {
+  if (state.data.tags.some((tag) => tag.name === name)) return;
+  state.data.tags.push(tagItem(name));
+}
+
+function templateImage(item) {
+  const url = item.imageUrl || item.image?.url || "";
+  if (!url) return null;
+  return {
+    id: uid("img"),
+    name: item.image?.name || "remote-image",
+    mimeType: item.image?.mimeType || "",
+    storageType: "remote",
+    url
+  };
+}
+
+function stepFromTemplate(stepItem) {
+  const content = stepItem.content?.toString().trim() || stepItem.text?.toString().trim();
+  if (!content) return null;
+  const time = Number(stepItem.time || 0) || Math.max(0, Math.floor(Number(stepItem.timeMinutes || 0) * 60));
+  const consumes = Array.isArray(stepItem.consumes) ? stepItem.consumes.map(consumeFromTemplate).filter(Boolean) : [];
+  return { id: uid("step"), content, time, consumes };
+}
+
+function consumeFromTemplate(item) {
+  const name = item.name?.toString().trim();
+  const count = Number(item.count) || 0;
+  if (!name || count <= 0) return null;
+  const ingredient = ensureIngredientByName(name, item.unit?.toString().trim() || "");
+  return { ingredientId: ingredient.id, count };
+}
+
+function ensureIngredientByName(name, unit = "") {
+  const existing = state.data.ingredients.find((ing) => ing.name === name);
+  if (existing) {
+    if (!existing.unit && unit) existing.unit = unit;
+    return existing;
+  }
+  const category = ensureDefaultCategory();
+  const ingredient = {
+    id: uid("ing"),
+    name,
+    categoryId: category.id,
+    stock: 0,
+    unit: unit || "份",
+    expireAt: ""
+  };
+  state.data.ingredients.push(ingredient);
+  return ingredient;
+}
+
 async function importText(text) {
   const parsed = JSON.parse(text);
   const saved = await storage.import(parsed);
@@ -1972,6 +2183,11 @@ document.addEventListener("click", async (event) => {
     render();
     return;
   }
+  if (action === "open-recipe-import") {
+    state.modal = { type: "recipeImport" };
+    render();
+    return;
+  }
   if (action === "delete-shopping") {
     state.data.shoppingList = state.data.shoppingList.filter((item) => item.id !== id);
     await saveAndRender("已删除购物项");
@@ -2072,6 +2288,29 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "copy-backup") {
     navigator.clipboard.writeText(storage.export()).then(() => showToast("备份文本已复制"));
+    return;
+  }
+  if (action === "copy-recipe-template") {
+    const text = recipeImportTemplateText();
+    const target = document.querySelector("#recipeImportText");
+    if (target) target.value = text;
+    navigator.clipboard?.writeText(text).then(() => showToast("菜谱模板已复制")).catch(() => showToast("模板已填入文本框"));
+    return;
+  }
+  if (action === "ai-recipe-template") {
+    try {
+      await generateRecipeTemplateFromAi();
+    } catch (err) {
+      showToast(err.message || "AI 解析失败");
+    }
+    return;
+  }
+  if (action === "import-recipe-template") {
+    try {
+      importRecipeTemplateText(document.querySelector("#recipeImportText")?.value || "");
+    } catch (err) {
+      showToast(err.message || "菜谱导入失败");
+    }
     return;
   }
   if (action === "import-backup-text") {

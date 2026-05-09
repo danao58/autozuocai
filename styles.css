@@ -626,6 +626,10 @@ textarea {
   resize: vertical;
 }
 
+.short-textarea {
+  min-height: 76px;
+}
+
 label {
   display: grid;
   gap: 7px;
