@@ -67,23 +67,58 @@ const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
 const storage = {
-  load() {
+  loadLocal() {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) {
       const demo = createDemoData();
-      this.save(demo);
+      this.saveLocal(demo);
       return demo;
     }
     try {
       return normalizeData(JSON.parse(raw));
     } catch {
       const demo = createDemoData();
-      this.save(demo);
+      this.saveLocal(demo);
       return demo;
     }
   },
-  save(data) {
+  saveLocal(data) {
     localStorage.setItem(STORE_KEY, JSON.stringify(data));
+  },
+  async load() {
+    if (CONFIG.storageMode !== "remote") return this.loadLocal();
+    try {
+      const response = await fetch(`${CONFIG.apiBase || "/api"}/data`, { cache: "no-store" });
+      if (!response.ok) throw new Error("远程数据读取失败");
+      const remote = await response.json();
+      if (!remote || !Array.isArray(remote.categories)) {
+        const demo = createDemoData();
+        await this.save(demo);
+        return demo;
+      }
+      const normalized = normalizeData(remote);
+      this.saveLocal(normalized);
+      return normalized;
+    } catch (err) {
+      console.warn(err);
+      showToast("远程数据读取失败，已使用本地缓存");
+      return this.loadLocal();
+    }
+  },
+  async save(data) {
+    this.saveLocal(data);
+    if (CONFIG.storageMode !== "remote") return;
+    try {
+      const response = await fetch(`${CONFIG.apiBase || "/api"}/data`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
+      if (!response.ok) throw new Error("远程数据保存失败");
+    } catch (err) {
+      console.warn(err);
+      showToast("远程保存失败，已暂存本地");
+    }
   },
   export() {
     return JSON.stringify({ ...state.data, meta: { ...state.data.meta, exportedAt: Date.now() } }, null, 2);
@@ -1994,5 +2029,9 @@ function renumberSteps() {
   });
 }
 
-state.data = storage.load();
-render();
+async function bootstrap() {
+  state.data = await storage.load();
+  render();
+}
+
+bootstrap();
