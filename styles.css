@@ -923,17 +923,22 @@ label {
   }
 
   .summary-metrics {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
     width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
   }
 
   .metric {
-    min-width: 0;
+    flex: 0 0 auto;
+    min-width: 92px;
   }
 
   .metric strong {
-    max-width: none;
+    max-width: 96px;
   }
 
   .top-actions,
@@ -959,6 +964,14 @@ label {
   .actions > button,
   .actions > label.ghost {
     flex: 1 1 auto;
+  }
+
+  .compact-card .actions {
+    align-items: center;
+  }
+
+  .compact-card .actions > button {
+    flex: 1 1 120px;
   }
 
   .split {
@@ -1086,18 +1099,17 @@ label {
   }
 
   .summary-metrics {
-    grid-template-columns: 1fr;
     gap: 6px;
   }
 
   .metric {
-    justify-content: space-between;
+    justify-content: center;
     min-height: 36px;
   }
 
   .metric strong,
   .metric.wide strong {
-    max-width: 68%;
+    max-width: 92px;
   }
 
   .mode-tabs,
@@ -1122,14 +1134,37 @@ label {
     grid-template-columns: 1fr;
   }
 
-  .actions {
+  .panel > .actions,
+  .modal-card .actions,
+  .modal-body .actions,
+  form > .actions,
+  .step-box > .actions {
     width: 100%;
   }
 
-  .actions > button,
-  .actions > label.ghost {
+  .panel > .actions > button,
+  .panel > .actions > label.ghost,
+  .modal-card .actions > button,
+  .modal-card .actions > label.ghost,
+  .modal-body .actions > button,
+  .modal-body .actions > label.ghost,
+  form > .actions > button,
+  form > .actions > label.ghost,
+  .step-box > .actions > button,
+  .step-box > .actions > label.ghost {
     flex-basis: 100%;
     width: 100%;
+  }
+
+  .card .actions,
+  .compact-card .actions {
+    width: auto;
+  }
+
+  .card .actions > button,
+  .compact-card .actions > button {
+    flex: 1 1 128px;
+    width: auto;
   }
 
   .card h3 {
