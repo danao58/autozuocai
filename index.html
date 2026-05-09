@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>做菜助手</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>做菜助手</h1>
+        <div id="summaryText" class="summary-metrics">根据冰箱库存安排今天吃什么</div>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" id="resetDemoBtn" type="button">重置示例</button>
+      </div>
+    </header>
+
+    <nav class="mode-tabs" aria-label="区域切换">
+      <button class="active" data-mode="front" type="button">前台</button>
+      <button data-mode="admin" type="button">后台</button>
+    </nav>
+
+    <nav class="page-tabs" id="frontTabs" aria-label="前台页面"></nav>
+
+    <nav class="page-tabs hidden" id="adminTabs" aria-label="后台页面"></nav>
+
+    <main id="app" class="content" aria-live="polite"></main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
