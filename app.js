@@ -1,7 +1,10 @@
 "use strict";
 
 const STORE_KEY = "cookbook_app_v1";
+const PENDING_REMOTE_SAVE_KEY = `${STORE_KEY}_pending_remote_save`;
+const REMOTE_SAVE_TIMEOUT = 8000;
 const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
+const DEFAULT_RECIPE_IMAGE = "defalut.png";
 const CONFIG = window.APP_CONFIG || {};
 const mealLabels = {
   breakfast: "早餐",
@@ -66,6 +69,8 @@ let state = {
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
+window.COOKBOOK_APP_BUILD = "20260509-savefix-10";
+
 const storage = {
   loadLocal() {
     const raw = localStorage.getItem(STORE_KEY);
@@ -83,10 +88,22 @@ const storage = {
     }
   },
   saveLocal(data) {
-    localStorage.setItem(STORE_KEY, JSON.stringify(data));
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(data));
+      return true;
+    } catch (err) {
+      console.warn(err);
+      showToast("本地暂存失败，可能是浏览器存储空间不足");
+      return false;
+    }
   },
   async load() {
     if (CONFIG.storageMode !== "remote") return this.loadLocal();
+    if (localStorage.getItem(PENDING_REMOTE_SAVE_KEY)) {
+      const local = this.loadLocal();
+      this.save(local);
+      return local;
+    }
     try {
       const response = await fetch(`${CONFIG.apiBase || "/api"}/data`, { cache: "no-store" });
       if (!response.ok) throw new Error("远程数据读取失败");
@@ -102,40 +119,57 @@ const storage = {
     } catch (err) {
       console.warn(err);
       showToast("远程数据读取失败，已使用本地缓存");
-      return this.loadLocal();
+      const local = this.loadLocal();
+      if (state.data) {
+        state.data = local;
+        render();
+      }
+      return local;
     }
   },
   async save(data) {
-    this.saveLocal(data);
-    if (CONFIG.storageMode !== "remote") return;
+    const localSaved = this.saveLocal(data);
+    if (CONFIG.storageMode !== "remote") return localSaved;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), REMOTE_SAVE_TIMEOUT);
     try {
       const response = await fetch(`${CONFIG.apiBase || "/api"}/data`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
+        body: JSON.stringify(data),
+        signal: controller.signal
       });
       if (!response.ok) throw new Error("远程数据保存失败");
+      localStorage.removeItem(PENDING_REMOTE_SAVE_KEY);
+      return true;
     } catch (err) {
       console.warn(err);
-      showToast("远程保存失败，已暂存本地");
+      localStorage.setItem(PENDING_REMOTE_SAVE_KEY, String(Date.now()));
+      showToast("远程保存失败，已暂存本地，请检查接口或数据库配置");
+      return false;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
   },
   export() {
     return JSON.stringify({ ...state.data, meta: { ...state.data.meta, exportedAt: Date.now() } }, null, 2);
   },
-  import(nextData) {
+  async import(nextData) {
     validateImport(nextData);
     const normalized = normalizeData(nextData);
-    this.save(normalized);
+    const saved = await this.save(normalized);
     state.data = normalized;
+    return saved;
   },
-  reset() {
+  async reset() {
     const demo = createDemoData();
-    this.save(demo);
+    const saved = await this.save(demo);
     state.data = demo;
+    return saved;
   },
   clear() {
     localStorage.removeItem(STORE_KEY);
+    localStorage.removeItem(PENDING_REMOTE_SAVE_KEY);
   }
 };
 
@@ -337,10 +371,36 @@ function normalizeTags(tags, recipes = []) {
   });
 }
 
-function saveAndRender(message) {
-  storage.save(state.data);
+async function saveAndRender(message) {
+  const saveTask = storage.save(state.data);
   render();
   if (message) showToast(message);
+  const saved = await saveTask;
+  return saved;
+}
+
+function persistAndRender(message) {
+  storage.saveLocal(state.data);
+  render();
+  if (message) showToast(message);
+  storage.save(state.data);
+  return true;
+}
+
+let filterRenderTimer = null;
+
+function scheduleFilterRender(target) {
+  const selector = target.dataset.filter ? `[data-filter="${target.dataset.filter}"]` : "";
+  window.clearTimeout(filterRenderTimer);
+  filterRenderTimer = window.setTimeout(() => {
+    render();
+    const next = selector ? document.querySelector(selector) : null;
+    if (next && ["INPUT", "TEXTAREA"].includes(next.tagName)) {
+      next.focus();
+      const end = next.value.length;
+      next.setSelectionRange(end, end);
+    }
+  }, 180);
 }
 
 function uid(prefix) {
@@ -487,7 +547,7 @@ function imageHtml(recipeItem) {
   if (recipeItem.image?.url) {
     return `<img class="recipe-image" src="${recipeItem.image.url}" alt="${escapeHtml(recipeItem.name)}">`;
   }
-  return `<div class="image-placeholder" style="--cover-color:${recipeItem.coverColor || "#d8f3dc"}">${escapeHtml(recipeItem.name.slice(0, 4))}</div>`;
+  return `<img class="recipe-image recipe-image-default" src="${DEFAULT_RECIPE_IMAGE}" alt="${escapeHtml(recipeItem.name || "recipe image")}">`;
 }
 
 function tagsHtml(tags) {
@@ -581,6 +641,7 @@ function render() {
     backup: renderBackup
   };
   app.innerHTML = `${pages[state.page] ? pages[state.page]() : renderRecommend()}${renderModal()}`;
+  bindFormSaves();
 }
 
 function renderPageTabs() {
@@ -656,7 +717,7 @@ function renderModal() {
           <p class="muted">请输入后台管理密码。</p>
           <form id="adminAuthForm">
             <label>密码<input name="password" type="password" autocomplete="current-password" autofocus></label>
-            <div class="actions" style="margin-top:14px"><button type="submit">进入后台</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px">${saveButton("adminAuthForm", "进入后台")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "后台管理验证", "compact");
   }
@@ -667,7 +728,7 @@ function renderModal() {
           <form id="categoryForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>分类名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
-            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px">${saveButton("categoryForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "分类表单", "compact");
   }
@@ -678,7 +739,7 @@ function renderModal() {
           <form id="tagForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>标签名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
-            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px">${saveButton("tagForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "标签表单", "compact");
   }
@@ -691,11 +752,11 @@ function renderModal() {
             <div class="form-grid">
               <label>名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
               <label>分类<select name="categoryId">${categoryOptions(item?.categoryId || "")}</select></label>
-              <label>库存<input name="stock" type="number" min="0" value="${escapeHtml(item?.stock ?? 0)}"></label>
+              <label>库存${stepperInput("stock", item?.stock ?? 0, 1, 0)}</label>
               <label>单位<select name="unit">${units.map((unit) => `<option value="${unit}" ${unit === item?.unit ? "selected" : ""}>${unit}</option>`).join("")}</select></label>
               <label>保质期<input name="expireAt" type="date" value="${escapeHtml(item?.expireAt || "")}"></label>
             </div>
-            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px">${saveButton("ingredientForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "食材表单");
   }
@@ -706,8 +767,8 @@ function renderModal() {
           <form id="shoppingForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>食材<select name="ingredientId">${state.data.ingredients.map((i) => `<option value="${i.id}" ${i.id === item?.ingredientId ? "selected" : ""}>${escapeHtml(i.name)}（${escapeHtml(i.unit)}）</option>`).join("")}</select></label>
-            <label>数量${stepperInput("count", item?.count ?? 1, 0.1, 0.1)}</label>
-            <div class="actions" style="margin-top:14px"><button data-action="save-shopping-form" type="button">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <label>数量${stepperInput("count", item?.count ?? 1, 1, 1)}</label>
+            <div class="actions" style="margin-top:14px">${saveButton("shoppingForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "购物项表单", "compact");
   }
@@ -720,7 +781,7 @@ function renderModal() {
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>库存${stepperInput("stock", item?.stock ?? 0, 1, 0)}</label>
             <label>保质期<input name="expireAt" type="date" value="${escapeHtml(item?.expireAt || "")}"></label>
-            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px">${saveButton("fridgeForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "冰箱库存编辑", "compact");
   }
@@ -730,9 +791,9 @@ function renderModal() {
           <p class="muted">从食材管理中选择已有食材，填写本次加入数量。</p>
           <form id="fridgeAddForm">
             <label>食材<select name="ingredientId">${state.data.ingredients.map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}（${escapeHtml(ing.unit)}，当前 ${ing.stock}${escapeHtml(ing.unit)}）</option>`).join("")}</select></label>
-            <label>加入数量${stepperInput("count", 1, 1, 0.1)}</label>
+            <label>加入数量${stepperInput("count", 1, 1, 1)}</label>
             <label>保质期<input name="expireAt" type="date"></label>
-            <div class="actions" style="margin-top:14px"><button type="submit">加入冰箱</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px">${saveButton("fridgeAddForm", "加入冰箱")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "加入食材", "compact");
   }
@@ -751,7 +812,7 @@ function renderModal() {
           <form id="warningForm">
             <label>提前预警天数${stepperInput("expireWarningDays", expireWarningDays(), 1, 0)}</label>
             <p class="muted">设置为 0 表示仅到期当天提示临期。</p>
-            <div class="actions" style="margin-top:14px"><button type="submit">保存</button><button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <div class="actions" style="margin-top:14px">${saveButton("warningForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "临期预警设置", "compact");
   }
@@ -767,6 +828,97 @@ function modalShell(content, label, size = "") {
       </section>
     </div>
   `;
+}
+
+function saveButton(formId, label = "保存") {
+  return `<button id="save_${escapeHtml(formId)}" data-save-form="${escapeHtml(formId)}" type="button">${escapeHtml(label)}</button>`;
+}
+
+function bindFormSaves() {
+  app.querySelectorAll("[data-save-form]").forEach((button) => {
+    button.addEventListener("click", () => runFormSave(button));
+  });
+}
+
+function runFormSave(button) {
+  console.debug("save button clicked", button.dataset.saveForm);
+  const formId = button.dataset.saveForm;
+  const scopedRoot = button.closest(".modal-card") || app;
+  const safeFormId = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(formId) : formId.replace(/"/g, "\\\"");
+  const form = formId ? scopedRoot.querySelector(`form#${safeFormId}`) || document.getElementById(formId) : button.closest("form");
+  const resolvedFormId = form?.getAttribute("id") || "";
+  console.debug("save form resolved", form?.tagName || "", resolvedFormId, Boolean(form));
+  if (!form || form.tagName !== "FORM") {
+    showToast("表单不存在");
+    return;
+  }
+  if (resolvedFormId === "shoppingForm" || formId === "shoppingForm") {
+    button.disabled = true;
+    try {
+      saveShoppingFormDirect(form);
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || "购物项保存失败");
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  if (form.dataset.saving === "1") return;
+  if (typeof form.reportValidity === "function" && !form.reportValidity()) return;
+  form.dataset.saving = "1";
+  button.disabled = true;
+  Promise.resolve(saveFormDirect(form))
+    .catch((err) => {
+      console.error(err);
+      showToast(err.message || "保存失败，请打开控制台查看错误");
+    })
+    .finally(() => {
+      delete form.dataset.saving;
+      button.disabled = false;
+        });
+}
+
+function saveFormDirect(form) {
+  if (form.getAttribute("id") === "shoppingForm") return saveShoppingFormDirect(form);
+  return handleFormSubmit(form);
+}
+
+function saveShoppingFormDirect(form) {
+  const id = form.querySelector("[name=id]")?.value || "";
+  const ingredientId = form.querySelector("[name=ingredientId]")?.value || "";
+  const countValue = form.querySelector("[name=count]")?.value || "";
+  console.debug("shopping form values", { id, ingredientId, countValue, ingredients: state.data.ingredients.length });
+  if (!state.data.ingredients.length) {
+    showToast("请先在食材管理中新增食材");
+    return;
+  }
+  const ing = ingredientById(ingredientId);
+  if (!ing) {
+    showToast("请选择食材");
+    return;
+  }
+  const count = Math.max(1, Math.floor(Number(countValue) || 0));
+  const next = {
+    id: id || uid("shop"),
+    ingredientId: ing.id,
+    name: ing.name,
+    count,
+    unit: ing.unit,
+    checked: false
+  };
+  if (id) {
+    const index = state.data.shoppingList.findIndex((item) => item.id === id);
+    if (index >= 0) state.data.shoppingList[index] = next;
+    else state.data.shoppingList.push(next);
+  } else {
+    state.data.shoppingList.push(next);
+  }
+  console.debug("shopping saved", state.data.shoppingList.length, next);
+  state.modal = null;
+  state.mode = "front";
+  state.page = "shopping";
+  persistAndRender(id ? "已更新购物项" : "已加入购物清单");
 }
 
 function stepperInput(name, value = 0, stepValue = 1, min = 0) {
@@ -1307,7 +1459,7 @@ function recipeForm(recipeItem) {
       </div>
       <div class="actions" style="margin-top:12px">
         <button class="ghost" data-action="add-step" type="button">新增步骤</button>
-        <button type="submit">保存菜谱</button>
+        ${saveButton("recipeForm", "保存菜谱")}
       </div>
     </form>
   `;
@@ -1337,7 +1489,7 @@ function consumeEditor(consume, stepIndex, consumeIndex) {
   return `
     <div class="consume-row" data-consume-index="${consumeIndex}">
       <label>食材<select name="consumeIngredient_${stepIndex}_${consumeIndex}"><option value="">不选择</option>${state.data.ingredients.map((ing) => `<option value="${ing.id}" ${ing.id === consume.ingredientId ? "selected" : ""}>${escapeHtml(ing.name)}（${escapeHtml(ing.unit)}）</option>`).join("")}</select></label>
-      <label>数量${stepperInput(`consumeCount_${stepIndex}_${consumeIndex}`, consume.count || 1, 0.1, 0.1)}</label>
+      <label>数量${stepperInput(`consumeCount_${stepIndex}_${consumeIndex}`, consume.count || 1, 1, 1)}</label>
       <button class="danger" data-action="remove-consume" type="button">删</button>
     </div>
   `;
@@ -1361,13 +1513,13 @@ function renderBackup() {
   `;
 }
 
-function addToToday(recipeId, mealType = "lunch") {
+async function addToToday(recipeId, mealType = "lunch") {
   if (state.data.todayDishes.some((item) => item.recipeId === recipeId)) {
     showToast("这道菜已经在今日菜品中");
     return;
   }
   state.data.todayDishes.push({ id: uid("today"), recipeId, mealType, status: "pending", createdAt: Date.now() });
-  saveAndRender("已加入今日菜品");
+  await saveAndRender("已加入今日菜品");
 }
 
 function askMealAndAdd(recipeId) {
@@ -1385,13 +1537,13 @@ function openAdminAuth(nextPage = "categories", nextModal = null) {
   render();
 }
 
-function addMissingToShopping(recipeId) {
+async function addMissingToShopping(recipeId) {
   const recipeItem = recipeById(recipeId);
   recipeStatus(recipeItem).missing.forEach((m) => mergeShopping(m));
-  saveAndRender("缺少食材已加入购物清单");
+  await saveAndRender("缺少食材已加入购物清单");
 }
 
-function addTodayMissingToShopping(dishId) {
+async function addTodayMissingToShopping(dishId) {
   const dish = state.data.todayDishes.find((item) => item.id === dishId);
   if (!dish) return showToast("今日菜品不存在");
   const recipeItem = recipeById(dish.recipeId);
@@ -1399,7 +1551,7 @@ function addTodayMissingToShopping(dishId) {
   const missing = recipeStatus(recipeItem).missing;
   if (!missing.length) return showToast("这道菜不缺食材");
   missing.forEach((m) => mergeShopping(m));
-  saveAndRender("缺少食材已加入购物清单");
+  await saveAndRender("缺少食材已加入购物清单");
 }
 
 function mergeShopping(item) {
@@ -1419,8 +1571,12 @@ function mergeShopping(item) {
   }
 }
 
-function saveShoppingForm(form) {
+async function saveShoppingForm(form) {
   const fd = new FormData(form);
+  if (!state.data.ingredients.length) {
+    showToast("请先在食材管理中新增食材");
+    return;
+  }
   const ing = ingredientById(fd.get("ingredientId"));
   if (!ing) {
     showToast("请选择食材");
@@ -1444,10 +1600,148 @@ function saveShoppingForm(form) {
     item.unit = ing.unit;
     item.checked = false;
   } else {
-    mergeShopping({ ingredientId: ing.id, name: ing.name, count, unit: ing.unit });
+    const existing = state.data.shoppingList.find((s) => s.ingredientId === ing.id);
+    if (existing) {
+      existing.count = Number(existing.count) + count;
+      existing.name = ing.name;
+      existing.unit = ing.unit;
+      existing.checked = false;
+    } else {
+      state.data.shoppingList.push({
+        id: uid("shop"),
+        ingredientId: ing.id,
+        name: ing.name,
+        count,
+        unit: ing.unit,
+        checked: false
+      });
+    }
   }
   state.modal = null;
-  saveAndRender(id ? "已更新购物项" : "已加入购物清单");
+  state.mode = "front";
+  state.page = "shopping";
+  persistAndRender(id ? "已更新购物项" : "已加入购物清单");
+}
+
+async function handleFormSubmit(form) {
+  if (!form) return;
+  const fd = new FormData(form);
+  const formId = form.getAttribute("id");
+  if (formId === "adminAuthForm") {
+    const password = fd.get("password")?.toString() || "";
+    if (password !== String(CONFIG.adminPassword || "")) return showToast("密码错误");
+    const nextPage = state.modal?.nextPage || "categories";
+    const nextModal = state.modal?.nextModal || null;
+    state.adminAuthed = true;
+    state.mode = "admin";
+    state.page = nextPage;
+    state.modal = nextModal;
+    render();
+    return;
+  }
+  if (formId === "categoryForm") {
+    const name = fd.get("name").toString().trim();
+    if (!name) return showToast("分类名称必填");
+    const id = fd.get("id");
+    if (id) {
+      const item = categoryById(id);
+      if (!item) return showToast("分类不存在");
+      item.name = name;
+    } else {
+      state.data.categories.push({ id: uid("cat"), name });
+    }
+    state.modal = null;
+    persistAndRender(id ? "已更新分类" : "已新增分类");
+    return;
+  }
+  if (formId === "tagForm") {
+    const id = fd.get("id");
+    const name = fd.get("name").toString().trim();
+    if (!name) return showToast("标签名称必填");
+    const duplicate = state.data.tags.some((item) => item.name === name && item.id !== id);
+    if (duplicate) return showToast("标签名称已存在");
+    if (id) {
+      const item = tagById(id);
+      if (!item) return showToast("标签不存在");
+      const oldName = item.name;
+      item.name = name;
+      state.data.recipes.forEach((recipeItem) => {
+        recipeItem.tags = recipeItem.tags.map((tag) => tag === oldName ? name : tag);
+      });
+      if (state.filters.recipeTag === oldName) state.filters.recipeTag = name;
+    } else {
+      state.data.tags.push(tagItem(name));
+    }
+    state.modal = null;
+    persistAndRender(id ? "已更新标签" : "已新增标签");
+    return;
+  }
+  if (formId === "ingredientForm") {
+    const id = fd.get("id");
+    const name = fd.get("name").toString().trim();
+    if (!name) return showToast("食材名称必填");
+    if (!fd.get("categoryId")) return showToast("请选择分类");
+    const duplicate = state.data.ingredients.some((item) => item.name === name && item.id !== id);
+    if (duplicate) return showToast("食材名称已存在");
+    const next = {
+      id: id || uid("ing"),
+      name,
+      categoryId: fd.get("categoryId"),
+      stock: Math.max(0, Math.floor(Number(fd.get("stock")) || 0)),
+      unit: fd.get("unit").toString().trim(),
+      expireAt: fd.get("expireAt")
+    };
+    const index = state.data.ingredients.findIndex((item) => item.id === id);
+    if (index >= 0) state.data.ingredients[index] = next;
+    else state.data.ingredients.push(next);
+    state.modal = null;
+    persistAndRender(id ? "已更新食材" : "已新增食材");
+    return;
+  }
+  if (formId === "shoppingForm") {
+    await saveShoppingForm(form);
+    return;
+  }
+  if (formId === "fridgeForm") {
+    const ing = ingredientById(fd.get("id"));
+    if (!ing) return showToast("食材不存在");
+    ing.stock = Math.max(0, Math.floor(Number(fd.get("stock")) || 0));
+    ing.expireAt = fd.get("expireAt");
+    state.modal = null;
+    persistAndRender("冰箱已更新");
+    return;
+  }
+  if (formId === "fridgeAddForm") {
+    const ing = ingredientById(fd.get("ingredientId"));
+    if (!ing) return showToast("请选择食材");
+    const count = Math.floor(Number(fd.get("count")));
+    if (!Number.isFinite(count) || count <= 0) return showToast("加入数量必须大于 0");
+    ing.stock = Math.max(0, Math.floor(Number(ing.stock) || 0)) + count;
+    const expireAt = fd.get("expireAt");
+    if (expireAt) ing.expireAt = expireAt;
+    state.activeFridgeCategoryId = ing.categoryId;
+    state.modal = null;
+    persistAndRender("食材已加入冰箱");
+    return;
+  }
+  if (formId === "warningForm") {
+    state.data.meta.expireWarningDays = Math.max(0, Math.floor(Number(fd.get("expireWarningDays")) || 0));
+    state.modal = null;
+    persistAndRender("临期预警已更新");
+    return;
+  }
+  if (formId === "recipeForm") {
+    try {
+      const next = parseRecipeForm(form);
+      const index = state.data.recipes.findIndex((r) => r.id === next.id);
+      if (index >= 0) state.data.recipes[index] = next;
+      else state.data.recipes.push(next);
+      state.modal = null;
+      persistAndRender("菜谱已保存");
+    } catch (err) {
+      showToast(err.message || "保存失败");
+    }
+  }
 }
 
 function startCooking(dishId) {
@@ -1478,7 +1772,7 @@ function setCookingStep(nextIndex) {
   render();
 }
 
-function finishCooking() {
+async function finishCooking() {
   const dish = state.data.todayDishes.find((item) => item.id === state.cooking.dishId);
   const recipeItem = dish && recipeById(dish.recipeId);
   if (!recipeItem) return;
@@ -1495,7 +1789,7 @@ function finishCooking() {
   state.data.cookHistory.push({ id: uid("his"), recipeId: recipeItem.id, recipeName: recipeItem.name, cookedAt: Date.now() });
   state.cooking = null;
   window.clearInterval(state.timerId);
-  saveAndRender("制作完成，库存已扣除");
+  await saveAndRender("制作完成，库存已扣除");
 }
 
 function parseRecipeForm(form) {
@@ -1529,16 +1823,22 @@ function parseRecipeForm(form) {
   };
 }
 
-function importText(text) {
+async function importText(text) {
   const parsed = JSON.parse(text);
-  storage.import(parsed);
+  const saved = await storage.import(parsed);
   render();
-  showToast("导入成功");
+  if (saved !== false) showToast("导入成功");
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const btn = event.target.closest("button");
   if (!btn) return;
+  if (btn.dataset.saveForm) {
+    event.preventDefault();
+    event.stopPropagation();
+    runFormSave(btn);
+    return;
+  }
   const { action, id, page, mode, index } = btn.dataset;
   if (action === "close-modal" && btn.classList.contains("modal-backdrop") && event.target !== btn) return;
   if (!action && !page && !mode && btn.id !== "resetDemoBtn") return;
@@ -1552,7 +1852,7 @@ document.addEventListener("click", (event) => {
     const mealType = btn.dataset.meal;
     state.modal = null;
     state.activeMeal = mealType;
-    addToToday(recipeId, mealType);
+    await addToToday(recipeId, mealType);
     return;
   }
   if (action === "switch-meal") {
@@ -1578,7 +1878,7 @@ document.addEventListener("click", (event) => {
   if (action === "confirm-modal") {
     const fn = state.modal?.onConfirm;
     state.modal = null;
-    if (typeof fn === "function") fn();
+    if (typeof fn === "function") await fn();
     return;
   }
   if (mode) {
@@ -1611,7 +1911,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "remove-today") {
     state.data.todayDishes = state.data.todayDishes.filter((item) => item.id !== id);
-    saveAndRender("已移除");
+    await saveAndRender("已移除");
     return;
   }
   if (action === "start-cooking") return startCooking(id);
@@ -1662,13 +1962,9 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (action === "open-shopping-form") {
+    if (!state.data.ingredients.length) return showToast("请先在食材管理中新增食材");
     state.modal = { type: "shoppingForm", id: id || "" };
     render();
-    return;
-  }
-  if (action === "save-shopping-form") {
-    const form = btn.closest("form");
-    if (form) saveShoppingForm(form);
     return;
   }
   if (action === "open-recipe-form") {
@@ -1678,7 +1974,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "delete-shopping") {
     state.data.shoppingList = state.data.shoppingList.filter((item) => item.id !== id);
-    saveAndRender("已删除购物项");
+    await saveAndRender("已删除购物项");
     return;
   }
   if (action === "apply-shopping") {
@@ -1687,35 +1983,35 @@ document.addEventListener("click", (event) => {
       if (ing) ing.stock = Number(ing.stock) + Number(item.count);
     });
     state.data.shoppingList = state.data.shoppingList.filter((item) => !item.checked);
-    saveAndRender("已购买食材已入库");
+    await saveAndRender("已购买食材已入库");
     return;
   }
   if (action === "delete-category") {
     if (state.data.ingredients.some((ing) => ing.categoryId === id)) return showToast("分类下还有食材，不能删除");
     state.data.categories = state.data.categories.filter((cat) => cat.id !== id);
-    saveAndRender("已删除分类");
+    await saveAndRender("已删除分类");
     return;
   }
   if (action === "delete-tag") {
     const tag = tagById(id);
     if (!tag) return;
-    openConfirm("删除标签", "删除后会同步从已有菜谱中移除该标签。", () => {
+    openConfirm("删除标签", "删除后会同步从已有菜谱中移除该标签。", async () => {
       state.data.tags = state.data.tags.filter((item) => item.id !== id);
       state.data.recipes.forEach((recipeItem) => {
         recipeItem.tags = recipeItem.tags.filter((name) => name !== tag.name);
       });
       if (state.filters.recipeTag === tag.name) state.filters.recipeTag = "";
-      saveAndRender("已删除标签");
+      await saveAndRender("已删除标签");
     }, "删除");
     return;
   }
   if (action === "delete-ingredient") {
-    openConfirm("删除食材", "删除后会同步移除菜谱步骤中的相关消耗。", () => {
+    openConfirm("删除食材", "删除后会同步移除菜谱步骤中的相关消耗。", async () => {
       state.data.ingredients = state.data.ingredients.filter((ing) => ing.id !== id);
       state.data.recipes.forEach((r) => r.steps.forEach((s) => {
         s.consumes = s.consumes.filter((c) => c.ingredientId !== id);
       }));
-      saveAndRender("已删除食材");
+      await saveAndRender("已删除食材");
     }, "删除");
     return;
   }
@@ -1730,10 +2026,10 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (action === "delete-recipe") {
-    openConfirm("删除菜谱", "删除后今日菜品中的同名菜也会移除。", () => {
+    openConfirm("删除菜谱", "删除后今日菜品中的同名菜也会移除。", async () => {
       state.data.recipes = state.data.recipes.filter((r) => r.id !== id);
       state.data.todayDishes = state.data.todayDishes.filter((d) => d.recipeId !== id);
-      saveAndRender("已删除菜谱");
+      await saveAndRender("已删除菜谱");
     }, "删除");
     return;
   }
@@ -1780,29 +2076,31 @@ document.addEventListener("click", (event) => {
   }
   if (action === "import-backup-text") {
     try {
-      importText(document.querySelector("#backupText").value);
+      await importText(document.querySelector("#backupText").value);
     } catch (err) {
       showToast(err.message || "导入失败");
     }
     return;
   }
   if (action === "clear-data") {
-    openConfirm("清空本地数据", "清空后当前分类、食材、菜谱、历史都会移除。", () => {
+    openConfirm("清空本地数据", "清空后当前分类、食材、菜谱、历史都会移除。", async () => {
       storage.clear();
       state.data = createEmptyData();
-      storage.save(state.data);
+      const saved = await storage.save(state.data);
       render();
+      if (saved !== false) showToast("本地数据已清空");
     }, "清空");
     return;
   }
   if (action === "reset-demo" || btn.id === "resetDemoBtn") {
-    openConfirm("重置示例数据", "当前数据会被示例数据覆盖。", () => {
-      storage.reset();
+    openConfirm("重置示例数据", "当前数据会被示例数据覆盖。", async () => {
+      const saved = await storage.reset();
       render();
+      if (saved !== false) showToast("示例数据已重置");
     }, "重置");
     return;
   }
-});
+}, true);
 
 document.addEventListener("dblclick", (event) => {
   const recipe = event.target.closest(".card[data-action='view-recipe'], .recipe-menu-item[data-action='view-recipe']");
@@ -1841,7 +2139,7 @@ document.addEventListener("dragover", (event) => {
   event.dataTransfer.dropEffect = "move";
 });
 
-document.addEventListener("drop", (event) => {
+document.addEventListener("drop", async (event) => {
   const btn = event.target.closest(".page-tabs button[data-page]");
   if (!btn || !draggedPage || btn.dataset.page === draggedPage) return;
   event.preventDefault();
@@ -1853,9 +2151,9 @@ document.addEventListener("drop", (event) => {
   order.splice(from, 1);
   order.splice(to, 0, draggedPage);
   state.data.meta[key] = order;
-  storage.save(state.data);
+  const saved = await storage.save(state.data);
   render();
-  showToast("页面排序已保存");
+  if (saved !== false) showToast("页面排序已保存");
 });
 
 document.addEventListener("input", (event) => {
@@ -1863,18 +2161,18 @@ document.addEventListener("input", (event) => {
   if (target.dataset.filter) {
     const key = target.dataset.filter;
     state.filters[key] = target.type === "checkbox" ? target.checked : target.value;
-    render();
+    scheduleFilterRender(target);
     return;
   }
 });
 
-document.addEventListener("change", (event) => {
+document.addEventListener("change", async (event) => {
   const target = event.target;
   if (target.classList.contains("shopping-check")) {
     const item = state.data.shoppingList.find((s) => s.id === target.dataset.id);
     if (!item) return;
     item.checked = target.checked;
-    saveAndRender();
+    await saveAndRender();
     return;
   }
   if (target.name === "imageFile" && target.files[0]) {
@@ -1882,7 +2180,7 @@ document.addEventListener("change", (event) => {
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) return showToast("只支持 JPG、PNG、WebP");
     if (file.size > MAX_IMAGE_SIZE) return showToast("图片不能超过 2MB");
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const image = { id: uid("img"), name: file.name, mimeType: file.type, storageType: "local", url: reader.result };
       document.querySelector("[name=imageData]").value = JSON.stringify(image);
       target.closest("form").querySelector(".step-box").innerHTML = `<img class="recipe-image" src="${reader.result}" alt="图片预览"><button class="danger" data-action="remove-image" type="button">删除图片</button>`;
@@ -1891,9 +2189,9 @@ document.addEventListener("change", (event) => {
   }
   if (target.id === "backupFile" && target.files[0]) {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
-        importText(reader.result);
+        await importText(reader.result);
       } catch (err) {
         showToast(err.message || "导入失败");
       }
@@ -1902,115 +2200,19 @@ document.addEventListener("change", (event) => {
   }
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (event.target.id === "adminAuthForm") {
-    const fd = new FormData(event.target);
-    const password = fd.get("password")?.toString() || "";
-    if (password !== String(CONFIG.adminPassword || "")) return showToast("密码错误");
-    const nextPage = state.modal?.nextPage || "categories";
-    const nextModal = state.modal?.nextModal || null;
-    state.adminAuthed = true;
-    state.mode = "admin";
-    state.page = nextPage;
-    state.modal = nextModal;
-    render();
-    return;
-  }
-  if (event.target.id === "categoryForm") {
-    const fd = new FormData(event.target);
-    const name = fd.get("name").toString().trim();
-    if (!name) return;
-    const id = fd.get("id");
-    if (id) {
-      const item = categoryById(id);
-      item.name = name;
-    } else {
-      state.data.categories.push({ id: uid("cat"), name });
-    }
-    state.modal = null;
-    saveAndRender(id ? "已更新分类" : "已新增分类");
-  }
-  if (event.target.id === "tagForm") {
-    const fd = new FormData(event.target);
-    const id = fd.get("id");
-    const name = fd.get("name").toString().trim();
-    if (!name) return;
-    const duplicate = state.data.tags.some((item) => item.name === name && item.id !== id);
-    if (duplicate) return showToast("标签名称已存在");
-    if (id) {
-      const item = tagById(id);
-      if (!item) return showToast("标签不存在");
-      const oldName = item.name;
-      item.name = name;
-      state.data.recipes.forEach((recipeItem) => {
-        recipeItem.tags = recipeItem.tags.map((tag) => tag === oldName ? name : tag);
-      });
-      if (state.filters.recipeTag === oldName) state.filters.recipeTag = name;
-    } else {
-      state.data.tags.push(tagItem(name));
-    }
-    state.modal = null;
-    saveAndRender(id ? "已更新标签" : "已新增标签");
-  }
-  if (event.target.id === "ingredientForm") {
-    const fd = new FormData(event.target);
-    const id = fd.get("id");
-    const next = {
-      id: id || uid("ing"),
-      name: fd.get("name").toString().trim(),
-      categoryId: fd.get("categoryId"),
-      stock: Number(fd.get("stock")) || 0,
-      unit: fd.get("unit").toString().trim(),
-      expireAt: fd.get("expireAt")
-    };
-    const index = state.data.ingredients.findIndex((item) => item.id === id);
-    if (index >= 0) state.data.ingredients[index] = next;
-    else state.data.ingredients.push(next);
-    state.modal = null;
-    saveAndRender(id ? "已更新食材" : "已新增食材");
-  }
-  if (event.target.id === "shoppingForm") {
-    saveShoppingForm(event.target);
-  }
-  if (event.target.id === "fridgeForm") {
-    const fd = new FormData(event.target);
-    const ing = ingredientById(fd.get("id"));
-    ing.stock = Math.max(0, Number(fd.get("stock")) || 0);
-    ing.expireAt = fd.get("expireAt");
-    state.modal = null;
-    saveAndRender("冰箱已更新");
-  }
-  if (event.target.id === "fridgeAddForm") {
-    const fd = new FormData(event.target);
-    const ing = ingredientById(fd.get("ingredientId"));
-    if (!ing) return showToast("请选择食材");
-    const count = Number(fd.get("count"));
-    if (!Number.isFinite(count) || count <= 0) return showToast("加入数量必须大于 0");
-    ing.stock = Number(ing.stock) + count;
-    const expireAt = fd.get("expireAt");
-    if (expireAt) ing.expireAt = expireAt;
-    state.activeFridgeCategoryId = ing.categoryId;
-    state.modal = null;
-    saveAndRender("食材已加入冰箱");
-  }
-  if (event.target.id === "warningForm") {
-    const fd = new FormData(event.target);
-    state.data.meta.expireWarningDays = Math.max(0, Math.floor(Number(fd.get("expireWarningDays")) || 0));
-    state.modal = null;
-    saveAndRender("临期预警已更新");
-  }
-  if (event.target.id === "recipeForm") {
-    try {
-      const next = parseRecipeForm(event.target);
-      const index = state.data.recipes.findIndex((r) => r.id === next.id);
-      if (index >= 0) state.data.recipes[index] = next;
-      else state.data.recipes.push(next);
-      state.modal = null;
-      saveAndRender("菜谱已保存");
-    } catch (err) {
-      showToast(err.message || "保存失败");
-    }
+  const form = event.target;
+  if (!form || form.dataset.saving === "1") return;
+  if (typeof form.reportValidity === "function" && !form.reportValidity()) return;
+  form.dataset.saving = "1";
+  try {
+    await saveFormDirect(form);
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || "保存失败，请打开控制台查看错误");
+  } finally {
+    delete form.dataset.saving;
   }
 });
 
