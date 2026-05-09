@@ -34,7 +34,33 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    methodNotAllowed(res, ["GET", "POST"]);
+    if (req.method === "PUT") {
+      const body = parseBody(req);
+      const result = await query(
+        `
+          update app_ingredients
+          set name = $2,
+              category_id = nullif($3, ''),
+              stock = $4,
+              unit = $5,
+              expire_at = nullif($6, '')::date,
+              updated_at = now()
+          where id = $1
+          returning *
+        `,
+        [req.query.id, body.name, body.categoryId || "", body.stock || 0, body.unit || "", body.expireAt || ""]
+      );
+      sendJson(res, result.rows[0] ? 200 : 404, result.rows[0] ? mapIngredient(result.rows[0]) : { error: "Ingredient not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      await query("delete from app_ingredients where id = $1", [req.query.id]);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    methodNotAllowed(res, ["GET", "POST", "PUT", "DELETE"]);
   } catch (error) {
     handleError(res, error);
   }

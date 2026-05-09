@@ -44,15 +44,15 @@ DATABASE_URL=postgresql://postgres:你的密码@db.wrpduaofxopoiqdumhyz.supabase
 后端已经拆成模块 API：
 
 - `GET/POST /api/categories`
-- `PUT/DELETE /api/categories/:id`
+- `PUT/DELETE /api/categories?id=:id`
 - `GET/POST /api/ingredients`
-- `PUT/DELETE /api/ingredients/:id`
+- `PUT/DELETE /api/ingredients?id=:id`
 - `GET/POST /api/tags`
-- `PUT/DELETE /api/tags/:id`
+- `PUT/DELETE /api/tags?id=:id`
 - `GET/POST /api/recipes`
-- `PUT/DELETE /api/recipes/:id`
+- `PUT/DELETE /api/recipes?id=:id`
 - `GET/POST /api/shopping`
-- `PUT/DELETE /api/shopping/:id`
+- `PUT/DELETE /api/shopping?id=:id`
 - `GET /api/snapshot`
 - `POST /api/migrate-json`
 

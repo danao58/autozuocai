@@ -61,7 +61,49 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    methodNotAllowed(res, ["GET", "POST"]);
+    if (req.method === "PUT") {
+      const body = parseBody(req);
+      const result = await query(
+        `
+          update app_recipes
+          set name = $2,
+              description = $3,
+              image = $4::jsonb,
+              cover_color = $5,
+              difficulty = $6,
+              favorite = $7,
+              steps = $8::jsonb,
+              updated_at = now()
+          where id = $1
+          returning *
+        `,
+        [
+          req.query.id,
+          body.name,
+          body.desc || "",
+          JSON.stringify(body.image || null),
+          body.coverColor || "#1769e0",
+          body.difficulty || "简单",
+          Boolean(body.favorite),
+          JSON.stringify(body.steps || [])
+        ]
+      );
+      if (!result.rows[0]) {
+        sendJson(res, 404, { error: "Recipe not found" });
+        return;
+      }
+      await replaceRecipeTags(req.query.id, body.tags || []);
+      sendJson(res, 200, mapRecipe(result.rows[0], body.tags || []));
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      await query("delete from app_recipes where id = $1", [req.query.id]);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    methodNotAllowed(res, ["GET", "POST", "PUT", "DELETE"]);
   } catch (error) {
     handleError(res, error);
   }

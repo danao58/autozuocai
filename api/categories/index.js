@@ -23,7 +23,28 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    methodNotAllowed(res, ["GET", "POST"]);
+    if (req.method === "PUT") {
+      const body = parseBody(req);
+      const result = await query(
+        "update app_categories set name = $2, updated_at = now() where id = $1 returning id, name",
+        [req.query.id, body.name]
+      );
+      sendJson(res, result.rows[0] ? 200 : 404, result.rows[0] || { error: "Category not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const used = await query("select 1 from app_ingredients where category_id = $1 limit 1", [req.query.id]);
+      if (used.rowCount) {
+        sendJson(res, 409, { error: "Category has ingredients" });
+        return;
+      }
+      await query("delete from app_categories where id = $1", [req.query.id]);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    methodNotAllowed(res, ["GET", "POST", "PUT", "DELETE"]);
   } catch (error) {
     handleError(res, error);
   }

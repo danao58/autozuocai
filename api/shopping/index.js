@@ -34,7 +34,33 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    methodNotAllowed(res, ["GET", "POST"]);
+    if (req.method === "PUT") {
+      const body = parseBody(req);
+      const result = await query(
+        `
+          update app_shopping_items
+          set ingredient_id = nullif($2, ''),
+              name = $3,
+              count = $4,
+              unit = $5,
+              checked = coalesce($6, checked),
+              updated_at = now()
+          where id = $1
+          returning *
+        `,
+        [req.query.id, body.ingredientId || "", body.name, body.count || 1, body.unit || "", body.checked]
+      );
+      sendJson(res, result.rows[0] ? 200 : 404, result.rows[0] ? mapItem(result.rows[0]) : { error: "Shopping item not found" });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      await query("delete from app_shopping_items where id = $1", [req.query.id]);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    methodNotAllowed(res, ["GET", "POST", "PUT", "DELETE"]);
   } catch (error) {
     handleError(res, error);
   }
