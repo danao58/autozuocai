@@ -109,7 +109,7 @@ let state = {
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
-window.COOKBOOK_APP_BUILD = "20260509-ai-recipe-1";
+window.COOKBOOK_APP_BUILD = "20260509-filter-ai-ui-1";
 
 const storage = {
   loadLocal() {
@@ -870,16 +870,14 @@ function renderModal() {
   if (modal.type === "recipeImport") {
     return modalShell(`
           <div class="modal-body">
-            <div class="actions" style="justify-content:space-between">
-              <h2>导入菜谱模板</h2>
-              <button class="ghost" data-action="close-modal" type="button">关闭</button>
-            </div>
+            <h2>导入菜谱模板</h2>
             <p class="muted">可以直接填文字、菜谱链接或视频链接，让 AI 生成下面的 JSON 模板；也可以复制空模板给外部 AI 填写后再粘贴导入。</p>
             <label>文字或链接<textarea id="recipeAiInput" class="short-textarea" placeholder="粘贴菜谱文字、小红书/抖音/B站等链接，或视频文案"></textarea></label>
             <div class="actions" style="margin:12px 0">
               <button data-action="ai-recipe-template" type="button">AI 解析成模板</button>
               <button data-action="copy-recipe-template" type="button">复制模板</button>
             </div>
+            <p id="recipeAiStatus" class="inline-status hidden"></p>
             <label>菜谱 JSON<textarea id="recipeImportText" placeholder="粘贴 AI 填好的菜谱模板 JSON"></textarea></label>
             <div class="actions" style="margin-top:12px">
               <button data-action="import-recipe-template" type="button">导入菜谱</button>
@@ -1068,7 +1066,7 @@ function renderRecommend() {
     return true;
   }));
   return `
-    <section class="toolbar">
+    <section class="toolbar compact-filterbar">
       ${canCookFilter("recommendCanCook", state.filters.recommendCanCook)}
     </section>
     <p class="notice">双击菜品卡片查看完整详情。</p>
@@ -1914,23 +1912,51 @@ function recipeImportTemplateText() {
   return JSON.stringify(RECIPE_IMPORT_TEMPLATE, null, 2);
 }
 
+function setRecipeAiStatus(message, tone = "") {
+  const box = document.querySelector("#recipeAiStatus");
+  if (!box) return;
+  box.textContent = message || "";
+  box.className = `inline-status ${tone}`.trim();
+  box.classList.toggle("hidden", !message);
+}
+
 async function generateRecipeTemplateFromAi() {
   const input = document.querySelector("#recipeAiInput")?.value.trim() || "";
   const target = document.querySelector("#recipeImportText");
+  const button = document.querySelector('[data-action="ai-recipe-template"]');
   if (!input) {
-    showToast("请先填写菜谱文字或链接");
+    setRecipeAiStatus("请先填写菜谱文字或链接。", "bad");
     return;
   }
-  showToast("AI 正在解析菜谱");
-  const response = await fetch(`${CONFIG.apiBase || "/api"}/ai-recipe`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "AI 解析失败");
-  if (target) target.value = JSON.stringify(data, null, 2);
-  showToast("AI 模板已生成，请检查后导入");
+  setRecipeAiStatus("AI 正在解析菜谱，稍等一下。", "loading");
+  if (button) {
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = "解析中";
+  }
+  try {
+    const response = await fetch(`${CONFIG.apiBase || "/api"}/ai-recipe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "AI 解析失败");
+    if (target) target.value = JSON.stringify(data, null, 2);
+    setRecipeAiStatus("AI 模板已生成，检查下面 JSON 后点击“导入菜谱”。", "ok");
+  } catch (err) {
+    const message = err.message === "Failed to fetch"
+      ? "AI 接口无法访问。本地请用 npm start 启动 Vercel Dev，不要用 63342 或直接打开 HTML；线上请检查 GEMINI_API_KEY。"
+      : err.message || "AI 解析失败";
+    setRecipeAiStatus(message, "bad");
+    throw new Error(message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = button.dataset.originalText || "AI 解析成模板";
+      delete button.dataset.originalText;
+    }
+  }
 }
 
 function importRecipeTemplateText(text) {
@@ -2301,7 +2327,7 @@ document.addEventListener("click", async (event) => {
     try {
       await generateRecipeTemplateFromAi();
     } catch (err) {
-      showToast(err.message || "AI 解析失败");
+      console.error(err);
     }
     return;
   }
