@@ -1152,7 +1152,7 @@ function renderCooking() {
           <h2>${escapeHtml(recipeItem.name)}</h2>
           <p class="muted">第 ${index + 1} / ${recipeItem.steps.length} 步</p>
         </div>
-        <button class="ghost" data-action="stop-cooking" type="button">结束制作</button>
+        <button class="stop-cooking-btn" data-action="stop-cooking" type="button">结束制作</button>
       </div>
       <div class="progress"><span style="width:${progress}%"></span></div>
       <h3 style="margin-top:16px">${escapeHtml(current.content)}</h3>
@@ -1161,7 +1161,7 @@ function renderCooking() {
       <div class="actions">
         <button class="ghost" data-action="prev-step" type="button" ${index === 0 ? "disabled" : ""}>上一步</button>
         ${current.time ? `<button data-action="toggle-timer" type="button">${state.cooking.paused ? "继续" : "暂停"}</button>` : ""}
-        ${index === recipeItem.steps.length - 1 ? `<button class="success" data-action="finish-cooking" type="button">制作完成</button>` : `<button data-action="next-step" type="button">下一步</button>`}
+        ${index === recipeItem.steps.length - 1 ? `<button class="finish-cooking-btn" data-action="finish-cooking" type="button">制作完成</button>` : `<button data-action="next-step" type="button">下一步</button>`}
       </div>
     </section>
   `;
@@ -1861,14 +1861,9 @@ async function finishCooking() {
   const dish = state.data.todayDishes.find((item) => item.id === state.cooking.dishId);
   const recipeItem = dish && recipeById(dish.recipeId);
   if (!recipeItem) return;
-  const status = recipeStatus(recipeItem);
-  if (!status.canCook) {
-    showToast(`库存不足：${status.missing.map((m) => `${m.name}缺${m.count}${m.unit}`).join("，")}`);
-    return;
-  }
   recipeNeeds(recipeItem).forEach((need) => {
     const ing = ingredientById(need.ingredientId);
-    ing.stock = Math.max(0, Number(ing.stock) - Number(need.count));
+    if (ing) ing.stock = Math.max(0, Number(ing.stock) - Number(need.count));
   });
   state.data.todayDishes = state.data.todayDishes.filter((item) => item.id !== dish.id);
   state.data.cookHistory.push({ id: uid("his"), recipeId: recipeItem.id, recipeName: recipeItem.name, cookedAt: Date.now() });
@@ -2153,9 +2148,7 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "start-cooking") return startCooking(id);
   if (action === "stop-cooking") {
-    state.cooking = null;
-    window.clearInterval(state.timerId);
-    render();
+    await finishCooking();
     return;
   }
   if (action === "prev-step") return setCookingStep(state.cooking.stepIndex - 1);

@@ -145,6 +145,39 @@ button.success:hover {
   background: var(--primary-dark);
 }
 
+button.stop-cooking-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  background: #fff1ed;
+  color: #d64a22;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+button.stop-cooking-btn:hover {
+  background: #ffe1d6;
+  color: #b73718;
+  box-shadow: none;
+}
+
+button.finish-cooking-btn {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+button.finish-cooking-btn:hover {
+  background: #bfdbfe;
+  color: #1e40af;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.14);
+}
+
 .app-shell {
   width: min(1260px, calc(100% - 32px));
   margin: 0 auto;
@@ -2117,6 +2150,13 @@ label {
   .compact-card .actions > button {
     flex: 1 1 128px;
     width: auto;
+  }
+
+  .panel > .actions > button.stop-cooking-btn {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 30px;
+    padding: 5px 10px;
   }
 
   .card h3 {
