@@ -1907,6 +1907,32 @@ function recipeImportTemplateText() {
   return JSON.stringify(RECIPE_IMPORT_TEMPLATE, null, 2);
 }
 
+function recipeExternalAiPromptText(input) {
+  return [
+    "Parse the following recipe text, link, or video transcript into importable JSON for a cookbook app.",
+    "",
+    "Output rules:",
+    "1. Output valid JSON only. Do not output Markdown or code fences.",
+    "2. The top-level JSON must be an object shaped as { \"recipes\": [...] }.",
+    "3. Put every parsed dish into the recipes array, even when there is only one dish.",
+    "4. Each recipe should include: name, desc, difficulty, tags, imageUrl, steps, source.",
+    "5. difficulty must be one of: 简单, 中等, 复杂.",
+    "6. tags should be short Chinese tags, such as 快手菜, 家常, 下饭, 主食, 素菜.",
+    "7. Each step must include: content, timeMinutes, consumes.",
+    "8. timeMinutes is a number of minutes. Use 0 when no timer is needed.",
+    "9. Each consumes item must include: name, count, unit. count must be a number.",
+    "10. Prefer these units when possible: 个, 克, 斤, 把, 颗, 片, 瓣, 勺, 碗, 份, 毫升.",
+    "11. If imageUrl is unavailable or unreliable, use an empty string.",
+    "12. Estimate unclear ingredient amounts reasonably, but do not invent key ingredients that are not implied by the source.",
+    "",
+    "Use this JSON structure as the schema reference:",
+    recipeImportTemplateText(),
+    "",
+    "Source content to parse:",
+    input
+  ].join("\n");
+}
+
 function setRecipeAiStatus(message, tone = "") {
   const box = document.querySelector("#recipeAiStatus");
   if (!box) return;
@@ -2310,10 +2336,21 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (action === "copy-recipe-template") {
-    const text = recipeImportTemplateText();
+    const input = document.querySelector("#recipeAiInput")?.value.trim() || "";
+    const text = input ? recipeExternalAiPromptText(input) : recipeImportTemplateText();
     const target = document.querySelector("#recipeImportText");
-    if (target) target.value = text;
-    navigator.clipboard?.writeText(text).then(() => showToast("菜谱模板已复制")).catch(() => showToast("模板已填入文本框"));
+    if (target && !input) target.value = text;
+    const copiedMessage = input ? "给外部 AI 的内容已复制" : "菜谱模板已复制";
+    const fallbackMessage = input ? "内容已生成，请手动复制" : "模板已填入文本框";
+    if (!navigator.clipboard) {
+      if (target) target.value = text;
+      showToast(fallbackMessage);
+      return;
+    }
+    navigator.clipboard.writeText(text).then(() => showToast(copiedMessage)).catch(() => {
+      if (target) target.value = text;
+      showToast(fallbackMessage);
+    });
     return;
   }
   if (action === "ai-recipe-template") {
