@@ -528,7 +528,10 @@ button.finish-cooking-btn:hover {
 
 .dish-list .today-card .recipe-image,
 .dish-list .today-card .image-placeholder {
-  aspect-ratio: auto;
+  width: 132px;
+  height: 132px;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
 }
 
 .meal-switch {
@@ -2335,6 +2338,13 @@ label {
   .dish-list .image-placeholder {
     width: 88px;
     min-height: 92px;
+  }
+
+  .dish-list .today-card .recipe-image,
+  .dish-list .today-card .image-placeholder {
+    width: 88px;
+    height: 88px;
+    min-height: 0;
   }
 
   .dish-list .card-body {
