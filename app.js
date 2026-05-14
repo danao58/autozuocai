@@ -1050,7 +1050,7 @@ function renderModal() {
     const item = modal.id ? recipeById(modal.id) : null;
     return modalShell(`
           <div class="modal-body">
-            <div class="actions" style="justify-content:space-between"><h2>${item ? "编辑菜谱" : "新增菜谱"}</h2><button class="ghost" data-action="close-modal" type="button">关闭</button></div>
+            <h2>${item ? "编辑菜谱" : "新增菜谱"}</h2>
             ${recipeForm(item)}
           </div>
     `, "菜谱表单", "wide");
