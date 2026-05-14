@@ -528,10 +528,39 @@ button.finish-cooking-btn:hover {
 
 .dish-list .today-card .recipe-image,
 .dish-list .today-card .image-placeholder {
-  width: 132px;
-  height: 132px;
+  width: 104px;
+  height: 104px;
   min-height: 0;
   aspect-ratio: 1 / 1;
+}
+
+.dish-list .today-card {
+  grid-template-columns: 104px minmax(0, 1fr);
+}
+
+.dish-list .today-card .card-body {
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 5px 10px;
+  padding: 10px;
+}
+
+.dish-list .today-card .card-body > .actions:not(.card-actions) {
+  width: 112px;
+  gap: 5px;
+}
+
+.dish-list .today-card h3 {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.dish-list .today-card p {
+  margin: 4px 0;
+}
+
+.dish-list .today-card .actions > button {
+  min-height: 30px;
+  padding: 5px 7px;
 }
 
 .meal-switch {
@@ -2342,9 +2371,24 @@ label {
 
   .dish-list .today-card .recipe-image,
   .dish-list .today-card .image-placeholder {
-    width: 88px;
-    height: 88px;
+    width: 72px;
+    height: 72px;
     min-height: 0;
+  }
+
+  .dish-list .today-card {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .dish-list .today-card .card-body {
+    grid-template-columns: minmax(0, 1fr) 78px;
+    gap: 3px 5px;
+    padding: 6px;
+  }
+
+  .dish-list .today-card .card-body > .actions:not(.card-actions) {
+    width: 78px;
+    gap: 3px;
   }
 
   .dish-list .card-body {
