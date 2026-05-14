@@ -55,6 +55,14 @@ const mealLabels = {
 const difficulties = ["简单", "中等", "复杂"];
 const defaultTags = ["快手菜", "家常", "下饭", "主食", "素菜", "低脂", "早餐", "暖胃"];
 const units = ["个", "克", "斤", "把", "颗", "瓣", "勺", "碗", "份", "毫升"];
+const defaultEmailWarning = {
+  enabled: false,
+  recipient: "",
+  autoSend: false,
+  lastSentDate: "",
+  lastError: "",
+  lastTestAt: ""
+};
 const timeOptions = [
   { label: "不计时", value: 0 },
   { label: "1 分钟", value: 60 },
@@ -222,7 +230,7 @@ function createEmptyData() {
     todayDishes: [],
     shoppingList: [],
     cookHistory: [],
-    meta: { version: 1, storageMode: "local", expireWarningDays: 3, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
+    meta: { version: 1, storageMode: "local", expireWarningDays: 3, emailWarning: { ...defaultEmailWarning }, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
   };
 }
 
@@ -309,7 +317,7 @@ function createDemoData() {
     todayDishes: [],
     shoppingList: [],
     cookHistory: [],
-    meta: { version: 1, storageMode: "local", expireWarningDays: 3, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
+    meta: { version: 1, storageMode: "local", expireWarningDays: 3, emailWarning: { ...defaultEmailWarning }, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
   });
 }
 
@@ -380,14 +388,20 @@ function normalizeData(data) {
 }
 
 function normalizeMeta(meta = {}) {
+  const emailWarning = {
+    ...defaultEmailWarning,
+    ...(meta.emailWarning || {})
+  };
   return {
     version: 1,
     storageMode: "local",
     expireWarningDays: 3,
+    emailWarning,
     frontPageOrder: normalizeOrder(meta.frontPageOrder, defaultFrontOrder),
     adminPageOrder: normalizeOrder(meta.adminPageOrder, defaultAdminOrder),
     exportedAt: null,
     ...meta,
+    emailWarning,
     frontPageOrder: normalizeOrder(meta.frontPageOrder, defaultFrontOrder),
     adminPageOrder: normalizeOrder(meta.adminPageOrder, defaultAdminOrder)
   };
@@ -580,6 +594,38 @@ function expireWarningDays() {
   return Math.max(0, Number(state.data.meta.expireWarningDays) || 0);
 }
 
+function emailWarningSettings() {
+  return {
+    ...defaultEmailWarning,
+    ...(state.data.meta.emailWarning || {})
+  };
+}
+
+function emailjsConfig() {
+  return {
+    serviceId: CONFIG.emailjs?.serviceId || "",
+    templateId: CONFIG.emailjs?.templateId || "",
+    publicKey: CONFIG.emailjs?.publicKey || ""
+  };
+}
+
+function readWarningSettingsForm(form) {
+  const fd = new FormData(form);
+  return {
+    ...emailWarningSettings(),
+    enabled: fd.get("emailEnabled") === "on",
+    autoSend: fd.get("emailAutoSend") === "on",
+    recipient: fd.get("emailRecipient")?.toString().trim() || ""
+  };
+}
+
+function parseEmailRecipients(value) {
+  return String(value || "")
+    .split(/[\s,;，；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function daysUntilExpire(ingredient) {
   if (!ingredient.expireAt) return null;
   const today = new Date();
@@ -602,6 +648,99 @@ function expireText(ingredient) {
   if (status === "expired") return `过期 ${Math.abs(days)} 天`;
   if (status === "soon") return `临期 ${days} 天`;
   return "新鲜";
+}
+
+function warningIngredients() {
+  return state.data.ingredients
+    .filter((ing) => hasStock(ing) && ["soon", "expired"].includes(expireState(ing)))
+    .sort((a, b) => (daysUntilExpire(a) ?? 9999) - (daysUntilExpire(b) ?? 9999));
+}
+
+function emailWarningBody(items) {
+  if (!items.length) return "当前没有临期或过期食材。";
+  return items.map((ing) => {
+    const expireAt = ing.expireAt || "未设置日期";
+    return `${ing.name}：${expireText(ing)}，库存 ${ing.stock}${ing.unit}，保质期 ${expireAt}`;
+  }).join("\n");
+}
+
+function emailWarningTemplateParams(items, recipient, mode = "正式预警") {
+  return {
+    to_email: recipient,
+    email: recipient,
+    recipient,
+    to_name: "做菜助手用户",
+    reply_to: recipient,
+    title: `做菜助手${mode}：${items.length} 个食材需要关注`,
+    subject: `做菜助手食材到期预警（${items.length} 项）`,
+    warning_days: expireWarningDays(),
+    item_count: items.length,
+    items_text: emailWarningBody(items),
+    message: emailWarningBody(items),
+    sent_at: new Date().toLocaleString("zh-CN", { hour12: false })
+  };
+}
+
+function ensureEmailWarningReady(recipients) {
+  const cfg = emailjsConfig();
+  if (!window.emailjs?.send) throw new Error("EmailJS SDK 未加载，请检查网络或 index.html 脚本。");
+  if (!cfg.serviceId || !cfg.templateId || !cfg.publicKey) throw new Error("EmailJS 配置不完整，请先填写 serviceId、templateId 和 publicKey。");
+  if (!recipients.length) throw new Error("请先填写预警收件邮箱。");
+  return cfg;
+}
+
+function emailSendErrorMessage(err) {
+  if (err?.text) return `邮件发送失败：${err.text}`;
+  if (err?.status) return `邮件发送失败：EmailJS 状态码 ${err.status}`;
+  return err?.message || "邮件发送失败";
+}
+
+function setEmailWarningError(message) {
+  state.data.meta.emailWarning = {
+    ...emailWarningSettings(),
+    lastError: message
+  };
+}
+
+async function sendExpireWarningEmail({ test = false } = {}) {
+  const settings = emailWarningSettings();
+  const recipients = parseEmailRecipients(settings.recipient);
+  const cfg = ensureEmailWarningReady(recipients);
+  let items = warningIngredients();
+  if (test && !items.length) {
+    items = [{ name: "测试食材", stock: 1, unit: "份", expireAt: new Date().toISOString().slice(0, 10) }];
+  }
+  if (!test && !items.length) {
+    showToast("暂无临期或过期食材，无需发送");
+    return false;
+  }
+  for (const recipient of recipients) {
+    const params = emailWarningTemplateParams(items, recipient, test ? "测试邮件" : "预警邮件");
+    await window.emailjs.send(cfg.serviceId, cfg.templateId, params, { publicKey: cfg.publicKey });
+  }
+  state.data.meta.emailWarning = {
+    ...settings,
+    lastError: "",
+    lastTestAt: test ? new Date().toLocaleString("zh-CN", { hour12: false }) : settings.lastTestAt,
+    lastSentDate: test ? settings.lastSentDate : new Date().toISOString().slice(0, 10)
+  };
+  await storage.save(state.data);
+  showToast(test ? `测试邮件已发送给 ${recipients.length} 个邮箱` : `食材到期预警邮件已发送给 ${recipients.length} 个邮箱`);
+  render();
+  return true;
+}
+
+async function maybeAutoSendExpireWarning() {
+  const settings = emailWarningSettings();
+  if (!settings.enabled || !settings.autoSend || !parseEmailRecipients(settings.recipient).length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  if (settings.lastSentDate === today) return;
+  if (!warningIngredients().length) return;
+  try {
+    await sendExpireWarningEmail();
+  } catch (err) {
+    console.warn(err);
+  }
 }
 
 function imageHtml(recipeItem) {
@@ -886,12 +1025,23 @@ function renderModal() {
     `, "导入菜谱模板", "wide");
   }
   if (modal.type === "warningSettings") {
+    const settings = emailWarningSettings();
+    const cfg = emailjsConfig();
+    const configOk = cfg.serviceId && cfg.templateId && cfg.publicKey;
     return modalShell(`
           <h2>临期预警设置</h2>
           <form id="warningForm">
             <label>提前预警天数${stepperInput("expireWarningDays", expireWarningDays(), 1, 0)}</label>
-            <p class="muted">设置为 0 表示仅到期当天提示临期。</p>
-            <div class="actions" style="margin-top:14px">${saveButton("warningForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
+            <label>预警收件邮箱<textarea name="emailRecipient" class="short-textarea" placeholder="多个邮箱可用逗号、分号、空格或换行分隔">${escapeHtml(settings.recipient)}</textarea></label>
+            <label class="check-row"><input name="emailEnabled" type="checkbox" ${settings.enabled ? "checked" : ""}>启用邮件预警</label>
+            <label class="check-row"><input name="emailAutoSend" type="checkbox" ${settings.autoSend ? "checked" : ""}>打开网页时每天自动发送一次</label>
+            <p class="muted">设置为 0 表示仅到期当天提示临期。EmailJS 配置：${configOk ? "已填写" : "未完整填写"}；最近发送：${escapeHtml(settings.lastSentDate || "暂无")}；最近测试：${escapeHtml(settings.lastTestAt || "暂无")}。</p>
+            ${settings.lastError ? `<p class="inline-status bad">${escapeHtml(settings.lastError)}</p>` : ""}
+            <div class="actions" style="margin-top:14px">
+              ${saveButton("warningForm")}
+              <button data-action="send-warning-email-test" type="button">发送测试邮件</button>
+              <button class="ghost" data-action="close-modal" type="button">取消</button>
+            </div>
           </form>
     `, "临期预警设置", "compact");
   }
@@ -1265,6 +1415,7 @@ function renderFridge() {
             <h2>临期食品预警</h2>
             <p class="muted">提前 ${expireWarningDays()} 天提醒，已过期食材会优先显示。</p>
           </div>
+          <button class="ghost" data-action="send-warning-email" type="button">发送邮件预警</button>
         </div>
         <div class="warning-list">
           ${warningItems.map((ing) => `
@@ -1320,12 +1471,14 @@ function renderShopping() {
             </label>
             <div class="shopping-main">
               <strong>${escapeHtml(item.name)}</strong>
-              <em>${item.count}${escapeHtml(item.unit)}</em>
+              <em>${escapeHtml(item.unit)}</em>
             </div>
-            <div class="actions shopping-actions">
-              <button class="ghost" data-action="open-shopping-form" data-id="${item.id}" type="button">编辑</button>
-              <button class="danger" data-action="delete-shopping" data-id="${item.id}" type="button">删除</button>
+            <div class="shopping-qty" aria-label="${escapeHtml(item.name)}数量">
+              <button class="ghost" data-action="shopping-count-minus" data-id="${item.id}" type="button" aria-label="减少">-</button>
+              <span>${item.count}${escapeHtml(item.unit)}</span>
+              <button class="ghost" data-action="shopping-count-plus" data-id="${item.id}" type="button" aria-label="增加">+</button>
             </div>
+            <button class="danger shopping-delete" data-action="delete-shopping" data-id="${item.id}" type="button">删除</button>
           </article>
         `).join("") || `<div class="empty">暂无购物项</div>`}
       </div>
@@ -1589,6 +1742,7 @@ function renderBackup() {
         <button data-action="download-backup" type="button">导出 JSON</button>
         <button class="ghost" data-action="copy-backup" type="button">复制备份文本</button>
         <label class="ghost" style="padding:9px 14px;border-radius:8px;cursor:pointer">导入 JSON<input id="backupFile" type="file" accept="application/json" hidden></label>
+        <button class="ghost" data-action="open-warning-settings" type="button">临期预警设置</button>
         <button class="danger" data-action="clear-data" type="button">清空本地数据</button>
         <button class="danger" data-action="reset-demo" type="button">重置示例数据</button>
       </div>
@@ -1811,6 +1965,7 @@ async function handleFormSubmit(form) {
   }
   if (formId === "warningForm") {
     state.data.meta.expireWarningDays = Math.max(0, Math.floor(Number(fd.get("expireWarningDays")) || 0));
+    state.data.meta.emailWarning = readWarningSettingsForm(form);
     state.modal = null;
     persistAndRender("临期预警已更新");
     return;
@@ -2196,6 +2351,23 @@ document.addEventListener("click", async (event) => {
     render();
     return;
   }
+  if (action === "send-warning-email-test" || action === "send-warning-email") {
+    try {
+      const form = btn.closest("form#warningForm");
+      if (form) {
+        state.data.meta.expireWarningDays = Math.max(0, Math.floor(Number(new FormData(form).get("expireWarningDays")) || 0));
+        state.data.meta.emailWarning = readWarningSettingsForm(form);
+      }
+      await sendExpireWarningEmail({ test: action === "send-warning-email-test" });
+    } catch (err) {
+      console.error(err);
+      const message = emailSendErrorMessage(err);
+      setEmailWarningError(message);
+      render();
+      showToast(message);
+    }
+    return;
+  }
   if (action === "open-fridge-add-form") {
     if (!state.data.ingredients.length) return showToast("请先在食材管理中新增食材");
     state.modal = { type: "fridgeAdd" };
@@ -2236,6 +2408,14 @@ document.addEventListener("click", async (event) => {
   if (action === "delete-shopping") {
     state.data.shoppingList = state.data.shoppingList.filter((item) => item.id !== id);
     await saveAndRender("已删除购物项");
+    return;
+  }
+  if (action === "shopping-count-minus" || action === "shopping-count-plus") {
+    const item = state.data.shoppingList.find((entry) => entry.id === id);
+    if (!item) return;
+    const next = Number(item.count || 0) + (action === "shopping-count-plus" ? 1 : -1);
+    item.count = Math.max(1, next);
+    await saveAndRender("购物数量已更新");
     return;
   }
   if (action === "apply-shopping") {

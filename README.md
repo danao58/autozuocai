@@ -28,6 +28,30 @@ GEMINI_API_KEY=你的 Google AI Studio API Key
 
 后台密码在 `config.js` 中配置。
 
+## EmailJS 到期预警配置
+
+1. 在 EmailJS 创建 Email Service，当前项目已预填 `serviceId: "service_vqns7od"`。
+2. 在 EmailJS 创建 Email Template，模板变量建议包含：
+   - `{{to_email}}`：收件邮箱
+   - `{{subject}}`：邮件标题
+   - `{{items_text}}` 或 `{{message}}`：临期/过期食材明细
+   - `{{warning_days}}`：提前预警天数
+   - `{{item_count}}`：预警食材数量
+   - `{{sent_at}}`：发送时间
+3. 打开 `config.js`，填写 `emailjs.templateId` 和 `emailjs.publicKey`。
+4. 进入后台的“临期预警设置”，填写收件邮箱、提前天数，并可点击“发送测试邮件”验证。多个邮箱可用逗号、分号、空格或换行分隔。
+5. 项目已配置 Vercel Cron：`/api/cron-expire-warning` 每天 UTC 01:00 触发一次，也就是北京时间 09:00 左右。
+6. Vercel Cron 使用 UTC 时间；Hobby 计划支持每天一次，执行时间可能在目标小时内浮动。
+7. Cron 后台发送复用后台“临期预警设置”的收件邮箱、提前天数、启用状态和自动发送开关。接口数量只新增 1 个。
+
+Vercel 环境变量建议配置：
+
+```text
+EMAILJS_SERVICE_ID=service_vqns7od
+EMAILJS_TEMPLATE_ID=template_6l87u93
+EMAILJS_PUBLIC_KEY=TwCRrKD7ZF6bNrHuE
+```
+
 ## 已实现功能
 
 - 今日推荐：根据库存推荐菜谱，显示缺少食材和临期食材。
