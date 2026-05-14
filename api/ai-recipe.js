@@ -1,10 +1,17 @@
 const { methodNotAllowed, parseBody, sendJson } = require("./_lib/http");
 
 const DIFFICULTIES = ["简单", "中等", "复杂"];
-const UNITS = ["个", "克", "斤", "把", "颗", "片", "瓣", "勺", "碗", "份", "毫升"];
+const DEFAULT_UNITS = ["个", "克", "斤", "把", "颗", "片", "瓣", "勺", "碗", "份", "毫升"];
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 
-function buildPrompt(input) {
+function normalizeUnits(value) {
+  const units = Array.isArray(value)
+    ? value.map((item) => item?.toString().trim()).filter(Boolean)
+    : [];
+  return units.length ? units : DEFAULT_UNITS;
+}
+
+function buildPrompt(input, units) {
   return `
 你是菜谱结构化助手。请把用户给的文字、菜谱说明或视频/图文链接整理成合法 JSON。
 
@@ -38,7 +45,7 @@ JSON 顶层格式必须是：
 
 规则：
 - difficulty 只能从 ${DIFFICULTIES.join("、")} 中选择。
-- unit 只能优先从 ${UNITS.join("、")} 中选择。
+- unit 只能优先从 ${units.join("、")} 中选择。
 - count 必须是数字，不能写中文数字。
 - 每个步骤的 timeMinutes 是分钟数，不需要计时填 0。
 - consumes 只填写该步骤新增或实际要消耗的食材。
@@ -64,14 +71,14 @@ function extractJson(text) {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-function normalizeRecipePayload(payload) {
+function normalizeRecipePayload(payload, units) {
   const recipes = Array.isArray(payload) ? payload : Array.isArray(payload?.recipes) ? payload.recipes : [];
   if (!recipes.length) throw new Error("AI 没有解析出菜谱");
   return {
     instructions: {
       usage: "请把文字菜谱或视频内容解析成 recipes 数组。只输出合法 JSON，不要输出 Markdown。",
       difficultyOptions: DIFFICULTIES,
-      unitOptions: UNITS,
+      unitOptions: units,
       timeField: "每个步骤用 timeMinutes 填写分钟数；不需要计时填 0。",
       ingredientRule: "consumes 里的 name 要写食材名称，count 写数字，unit 必须优先从 unitOptions 中选择；系统没有的食材会自动新增，库存默认为 0。"
     },
@@ -94,6 +101,7 @@ module.exports = async function handler(req, res) {
 
     const body = parseBody(req);
     const input = String(body.input || "").trim();
+    const units = normalizeUnits(body.units);
     if (!input) {
       sendJson(res, 400, { error: "请输入菜谱文字或链接" });
       return;
@@ -113,7 +121,7 @@ module.exports = async function handler(req, res) {
         contents: [
           {
             role: "user",
-            parts: [{ text: buildPrompt(input) }]
+            parts: [{ text: buildPrompt(input, units) }]
           }
         ],
         generationConfig: {
@@ -131,7 +139,7 @@ module.exports = async function handler(req, res) {
     }
 
     const parsed = extractJson(readGeminiText(data));
-    sendJson(res, 200, normalizeRecipePayload(parsed));
+    sendJson(res, 200, normalizeRecipePayload(parsed, units));
   } catch (error) {
     console.error(error);
     sendJson(res, 500, { error: error.message || "AI 解析失败" });

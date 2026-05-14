@@ -54,7 +54,7 @@ const mealLabels = {
 };
 const difficulties = ["简单", "中等", "复杂"];
 const defaultTags = ["快手菜", "家常", "下饭", "主食", "素菜", "低脂", "早餐", "暖胃"];
-const units = ["个", "克", "斤", "把", "颗", "瓣", "勺", "碗", "份", "毫升"];
+const defaultUnits = ["个", "克", "斤", "把", "颗", "片", "瓣", "勺", "碗", "份", "毫升"];
 const defaultEmailWarning = {
   enabled: false,
   recipient: "",
@@ -81,11 +81,12 @@ const pageLabels = {
   categories: "食材分类",
   ingredients: "食材管理",
   tags: "菜谱标签管理",
+  units: "单位管理",
   recipeAdmin: "菜谱管理",
   backup: "备份恢复"
 };
 const defaultFrontOrder = ["recommend", "today", "recipes", "fridge", "shopping", "history"];
-const defaultAdminOrder = ["categories", "ingredients", "tags", "recipeAdmin", "backup"];
+const defaultAdminOrder = ["categories", "ingredients", "tags", "units", "recipeAdmin", "backup"];
 
 let state = {
   mode: "front",
@@ -226,11 +227,12 @@ function createEmptyData() {
     categories: [],
     ingredients: [],
     tags: defaultTags.map((name) => tagItem(name)),
+    units: defaultUnits.map((name) => unitItem(name)),
     recipes: [],
     todayDishes: [],
     shoppingList: [],
     cookHistory: [],
-    meta: { version: 1, storageMode: "local", expireWarningDays: 3, emailWarning: { ...defaultEmailWarning }, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
+    meta: { version: 1, storageMode: "local", expireWarningDays: 3, dishViewMode: "grid", emailWarning: { ...defaultEmailWarning }, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
   };
 }
 
@@ -313,11 +315,12 @@ function createDemoData() {
     categories,
     ingredients,
     tags: defaultTags.map((name) => tagItem(name)),
+    units: defaultUnits.map((name) => unitItem(name)),
     recipes,
     todayDishes: [],
     shoppingList: [],
     cookHistory: [],
-    meta: { version: 1, storageMode: "local", expireWarningDays: 3, emailWarning: { ...defaultEmailWarning }, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
+    meta: { version: 1, storageMode: "local", expireWarningDays: 3, dishViewMode: "grid", emailWarning: { ...defaultEmailWarning }, frontPageOrder: defaultFrontOrder, adminPageOrder: defaultAdminOrder, exportedAt: null }
   });
 }
 
@@ -339,6 +342,10 @@ function tagItem(name, id = "") {
   return { id: id || uid("tag"), name };
 }
 
+function unitItem(name, id = "") {
+  return { id: id || uid("unit"), name };
+}
+
 function step(content, time, consumes) {
   return {
     id: uid("step"),
@@ -350,6 +357,7 @@ function step(content, time, consumes) {
 
 function normalizeData(data) {
   const normalizedTags = normalizeTags(data.tags, data.recipes);
+  const normalizedUnits = normalizeUnits(data.units, data.ingredients);
   return {
     categories: Array.isArray(data.categories) ? data.categories : [],
     ingredients: Array.isArray(data.ingredients) ? data.ingredients.map((item) => ({
@@ -361,6 +369,7 @@ function normalizeData(data) {
       expireAt: item.expireAt || ""
     })) : [],
     tags: normalizedTags,
+    units: normalizedUnits,
     recipes: Array.isArray(data.recipes) ? data.recipes.map((item) => ({
       id: item.id || uid("rec"),
       name: item.name || "",
@@ -387,6 +396,17 @@ function normalizeData(data) {
   };
 }
 
+function normalizeUnits(unitList, ingredients = []) {
+  const values = [];
+  const add = (value) => {
+    const name = typeof value === "string" ? value.trim() : value?.name?.toString().trim();
+    if (name && !values.includes(name)) values.push(name);
+  };
+  (Array.isArray(unitList) && unitList.length ? unitList : defaultUnits).forEach(add);
+  (Array.isArray(ingredients) ? ingredients : []).forEach((ing) => add(ing.unit));
+  return values.map((name) => unitItem(name));
+}
+
 function normalizeMeta(meta = {}) {
   const emailWarning = {
     ...defaultEmailWarning,
@@ -396,6 +416,7 @@ function normalizeMeta(meta = {}) {
     version: 1,
     storageMode: "local",
     expireWarningDays: 3,
+    dishViewMode: "grid",
     emailWarning,
     frontPageOrder: normalizeOrder(meta.frontPageOrder, defaultFrontOrder),
     adminPageOrder: normalizeOrder(meta.adminPageOrder, defaultAdminOrder),
@@ -501,6 +522,10 @@ function showToast(message) {
 
 function ingredientById(id) {
   return state.data.ingredients.find((item) => item.id === id);
+}
+
+function unitById(id) {
+  return state.data.units.find((item) => item.id === id);
 }
 
 function categoryById(id) {
@@ -774,14 +799,18 @@ function recipeCard(recipeItem, options = {}) {
       <article class="card compact-card" data-action="view-recipe" data-id="${recipeItem.id}" title="双击查看详情">
         ${imageHtml(recipeItem)}
         <div class="card-body">
-          <div class="actions" style="justify-content:space-between">
+          <div class="list-main">
             <h3>${escapeHtml(recipeItem.name)}</h3>
-            <span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : `缺 ${status.missing.length} 种`}</span>
+            <p class="muted">${escapeHtml(recipeItem.desc || "暂无描述")}</p>
+            <p><span class="tag">${formatTime(totalTime(recipeItem))}</span>${status.expiring.length ? ` <span class="status warn">有临期</span>` : ""}</p>
+            ${status.missing.length ? `<p class="missing">${escapeHtml(status.missing.slice(0, 2).map((m) => m.name).join("、"))}${status.missing.length > 2 ? "等" : ""} 不足</p>` : ""}
+            <div class="actions card-actions">
+              <button data-action="add-today" data-id="${recipeItem.id}" type="button" ${inToday ? "disabled" : ""}>${inToday ? "已加入" : "加入今日菜品"}</button>
+              ${status.missing.length ? `<button class="ghost" data-action="add-missing-shopping" data-id="${recipeItem.id}" type="button">加入购物清单</button>` : ""}
+            </div>
           </div>
-          <p class="muted">${escapeHtml(recipeItem.desc || "暂无描述")}</p>
-          <p><span class="tag">${formatTime(totalTime(recipeItem))}</span>${status.expiring.length ? ` <span class="status warn">有临期</span>` : ""}</p>
-          ${status.missing.length ? `<p class="missing">${escapeHtml(status.missing.slice(0, 2).map((m) => m.name).join("、"))}${status.missing.length > 2 ? "等" : ""} 不足</p>` : ""}
-          <div class="actions">
+          <div class="actions list-side">
+            <span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : `缺 ${status.missing.length} 种`}</span>
             <button data-action="add-today" data-id="${recipeItem.id}" type="button" ${inToday ? "disabled" : ""}>${inToday ? "已加入" : "加入今日菜品"}</button>
             ${status.missing.length ? `<button class="ghost" data-action="add-missing-shopping" data-id="${recipeItem.id}" type="button">加入购物清单</button>` : ""}
           </div>
@@ -793,16 +822,24 @@ function recipeCard(recipeItem, options = {}) {
     <article class="card" data-action="view-recipe" data-id="${recipeItem.id}" title="双击查看详情">
       ${imageHtml(recipeItem)}
       <div class="card-body">
-        <div class="actions" style="justify-content:space-between">
-          <h3>${escapeHtml(recipeItem.name)}</h3>
+        <div class="list-main">
+          <div class="actions" style="justify-content:space-between">
+            <h3>${escapeHtml(recipeItem.name)}</h3>
+          </div>
+          <p class="muted">${escapeHtml(recipeItem.desc)}</p>
+          ${tagsHtml(recipeItem.tags)}
+          <p class="card-status"><span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : "缺少食材"}</span> <span class="tag">${recipeItem.difficulty}</span> <span class="tag">${formatTime(totalTime(recipeItem))}</span></p>
+          <div class="chip-row">${needsHtml(recipeItem)}</div>
+          <p>${missingHtml(status.missing)}</p>
+          ${status.expiring.length ? `<p><span class="status warn">使用临期：${escapeHtml(status.expiring.join("、"))}</span></p>` : ""}
+          <div class="actions card-actions">
+            <button data-action="add-today" data-id="${recipeItem.id}" type="button" ${inToday ? "disabled" : ""}>${inToday ? "已加入" : "加入今日菜品"}</button>
+            ${status.missing.length ? `<button class="ghost" data-action="add-missing-shopping" data-id="${recipeItem.id}" type="button">缺少食材加入购物清单</button>` : ""}
+            ${options.admin ? `<button class="ghost" data-action="edit-recipe" data-id="${recipeItem.id}" type="button">编辑</button><button class="danger" data-action="delete-recipe" data-id="${recipeItem.id}" type="button">删除</button>` : ""}
+          </div>
         </div>
-        <p class="muted">${escapeHtml(recipeItem.desc)}</p>
-        ${tagsHtml(recipeItem.tags)}
-        <p><span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : "缺少食材"}</span> <span class="tag">${recipeItem.difficulty}</span> <span class="tag">${formatTime(totalTime(recipeItem))}</span></p>
-        <div class="chip-row">${needsHtml(recipeItem)}</div>
-        <p>${missingHtml(status.missing)}</p>
-        ${status.expiring.length ? `<p><span class="status warn">使用临期：${escapeHtml(status.expiring.join("、"))}</span></p>` : ""}
-        <div class="actions">
+        <div class="actions list-side">
+          <span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : "缺少食材"}</span>
           <button data-action="add-today" data-id="${recipeItem.id}" type="button" ${inToday ? "disabled" : ""}>${inToday ? "已加入" : "加入今日菜品"}</button>
           ${status.missing.length ? `<button class="ghost" data-action="add-missing-shopping" data-id="${recipeItem.id}" type="button">缺少食材加入购物清单</button>` : ""}
           ${options.admin ? `<button class="ghost" data-action="edit-recipe" data-id="${recipeItem.id}" type="button">编辑</button><button class="danger" data-action="delete-recipe" data-id="${recipeItem.id}" type="button">删除</button>` : ""}
@@ -837,6 +874,7 @@ function render() {
     categories: renderCategories,
     ingredients: renderIngredients,
     tags: renderTags,
+    units: renderUnits,
     recipeAdmin: renderRecipeAdmin,
     backup: renderBackup
   };
@@ -943,6 +981,17 @@ function renderModal() {
           </form>
     `, "标签表单", "compact");
   }
+  if (modal.type === "unitForm") {
+    const item = modal.id ? unitById(modal.id) : null;
+    return modalShell(`
+          <h2>${item ? "编辑单位" : "新增单位"}</h2>
+          <form id="unitForm">
+            <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
+            <label>单位名称<input name="name" required value="${escapeHtml(item?.name || "")}" placeholder="例如：个、克、勺"></label>
+            <div class="actions" style="margin-top:14px">${saveButton("unitForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
+          </form>
+    `, "单位表单", "compact");
+  }
   if (modal.type === "ingredientForm") {
     const item = modal.id ? ingredientById(modal.id) : null;
     return modalShell(`
@@ -953,7 +1002,7 @@ function renderModal() {
               <label>名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
               <label>分类<select name="categoryId">${categoryOptions(item?.categoryId || "")}</select></label>
               <label>库存${stepperInput("stock", item?.stock ?? 0, 1, 0)}</label>
-              <label>单位<select name="unit">${units.map((unit) => `<option value="${unit}" ${unit === item?.unit ? "selected" : ""}>${unit}</option>`).join("")}</select></label>
+              <label>单位<select name="unit">${unitOptions(item?.unit || "")}</select></label>
               <label>保质期<input name="expireAt" type="date" value="${escapeHtml(item?.expireAt || "")}"></label>
             </div>
             <div class="actions" style="margin-top:14px">${saveButton("ingredientForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
@@ -1215,12 +1264,14 @@ function renderRecommend() {
     if (state.filters.recommendCanCook === "yes") return status.canCook;
     return true;
   }));
+  const viewMode = dishViewMode();
   return `
     <section class="toolbar compact-filterbar">
       ${canCookFilter("recommendCanCook", state.filters.recommendCanCook)}
+      ${dishViewToggle()}
     </section>
     <p class="notice">双击菜品卡片查看完整详情。</p>
-    <section class="grid">
+    <section class="${viewMode === "list" ? "dish-list" : "dish-grid"}">
       ${recipes.map((item) => recipeCard(item, { compact: true })).join("") || `<div class="empty">还没有菜谱</div>`}
     </section>
   `;
@@ -1230,6 +1281,7 @@ function renderToday() {
   if (state.cooking) return renderCooking();
   const items = state.data.todayDishes.filter((item) => item.mealType === state.activeMeal);
   const total = state.data.todayDishes.length;
+  const viewMode = dishViewMode();
   return `
     <section class="panel">
       <div class="actions" style="justify-content:space-between">
@@ -1237,6 +1289,7 @@ function renderToday() {
           <h2>今日菜品</h2>
           <p class="muted">共 ${total} 道，当前查看 ${mealLabels[state.activeMeal]}</p>
         </div>
+        ${dishViewToggle()}
       </div>
       <div class="meal-switch" role="tablist" aria-label="餐次切换">
         ${Object.entries(mealLabels).map(([mealType, label]) => {
@@ -1245,9 +1298,23 @@ function renderToday() {
         }).join("")}
       </div>
     </section>
-    <section class="today-grid">
+    <section class="${viewMode === "list" ? "dish-list" : "dish-grid"}">
       ${items.map((dish) => todayCard(dish)).join("") || `<div class="empty">这个餐次还没有菜品</div>`}
     </section>
+  `;
+}
+
+function dishViewMode() {
+  return state.data.meta.dishViewMode === "list" ? "list" : "grid";
+}
+
+function dishViewToggle() {
+  const mode = dishViewMode();
+  return `
+    <div class="segmented view-toggle" role="radiogroup" aria-label="菜品展示方式">
+      <button class="${mode === "grid" ? "active" : ""}" data-action="set-dish-view" data-view="grid" type="button">竖</button>
+      <button class="${mode === "list" ? "active" : ""}" data-action="set-dish-view" data-view="list" type="button">横</button>
+    </div>
   `;
 }
 
@@ -1265,13 +1332,16 @@ function todayCard(dish) {
   if (!recipeItem) return "";
   const status = recipeStatus(recipeItem);
   return `
-    <article class="card today-card">
+    <article class="card today-card" data-action="view-recipe" data-id="${recipeItem.id}" title="双击查看详情">
       ${imageHtml(recipeItem)}
       <div class="card-body">
-        <h3>${escapeHtml(recipeItem.name)}</h3>
-        <p><span class="tag">${mealLabels[dish.mealType]}</span> <span class="tag">${formatTime(totalTime(recipeItem))}</span> <span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : "缺少食材"}</span></p>
-        <p>${missingHtml(status.missing)}</p>
-        <div class="actions">
+        <div class="list-main">
+          <h3>${escapeHtml(recipeItem.name)}</h3>
+          <p class="card-status"><span class="tag">${mealLabels[dish.mealType]}</span> <span class="tag">${formatTime(totalTime(recipeItem))}</span> <span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : "缺少食材"}</span></p>
+          <p>${missingHtml(status.missing)}</p>
+        </div>
+        <div class="actions list-side">
+          <span class="status list-only ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可制作" : "缺少食材"}</span>
           <button data-action="start-cooking" data-id="${dish.id}" type="button">开始制作</button>
           ${status.missing.length ? `<button class="ghost" data-action="add-today-missing-shopping" data-id="${dish.id}" type="button">缺食材加购物车</button>` : ""}
           <button class="danger" data-action="remove-today" data-id="${dish.id}" type="button">移除</button>
@@ -1370,18 +1440,20 @@ function recipeMenuItem(recipeItem) {
     <article class="recipe-menu-item" data-action="view-recipe" data-id="${recipeItem.id}" title="双击查看详情">
       ${imageHtml(recipeItem)}
       <div class="recipe-menu-main">
-        <div class="recipe-menu-head">
-          <h3>${escapeHtml(recipeItem.name)}</h3>
+        <div class="recipe-menu-content">
+          <div class="recipe-menu-head">
+            <h3>${escapeHtml(recipeItem.name)}</h3>
+          </div>
+          <p>${escapeHtml(recipeItem.desc || "暂无描述")}</p>
+          <div class="recipe-menu-meta">
+            <span>${escapeHtml(recipeItem.difficulty)}</span>
+            <span>${formatTime(totalTime(recipeItem))}</span>
+            ${status.expiring.length ? `<span class="warn-text">有临期</span>` : ""}
+          </div>
+          ${status.missing.length ? `<div class="recipe-menu-missing">${escapeHtml(status.missing.slice(0, 2).map((m) => m.name).join("、"))}${status.missing.length > 2 ? "等" : ""} 不足</div>` : ""}
+        </div>
+        <div class="recipe-menu-side">
           <span class="status ${status.canCook ? "ok" : "bad"}">${status.canCook ? "可做" : `缺 ${status.missing.length}`}</span>
-        </div>
-        <p>${escapeHtml(recipeItem.desc || "暂无描述")}</p>
-        <div class="recipe-menu-meta">
-          <span>${escapeHtml(recipeItem.difficulty)}</span>
-          <span>${formatTime(totalTime(recipeItem))}</span>
-          ${status.expiring.length ? `<span class="warn-text">有临期</span>` : ""}
-        </div>
-        ${status.missing.length ? `<div class="recipe-menu-missing">${escapeHtml(status.missing.slice(0, 2).map((m) => m.name).join("、"))}${status.missing.length > 2 ? "等" : ""} 不足</div>` : ""}
-        <div class="actions recipe-menu-actions">
           <button data-action="add-today" data-id="${recipeItem.id}" type="button" ${inToday ? "disabled" : ""}>${inToday ? "已加入" : "加入今日"}</button>
           ${status.missing.length ? `<button class="ghost" data-action="add-missing-shopping" data-id="${recipeItem.id}" type="button">加购物清单</button>` : ""}
         </div>
@@ -1627,8 +1699,27 @@ function renderTags() {
   `;
 }
 
+function renderUnits() {
+  return `
+    <section class="panel">
+      <div class="actions" style="justify-content:space-between"><h2>单位列表</h2><button data-action="open-unit-form" type="button">新增单位</button></div>
+      <table class="table"><thead><tr><th>名称</th><th>使用食材数</th><th>操作</th></tr></thead><tbody>${state.data.units.map((unit) => `
+        <tr>
+          <td>${escapeHtml(unit.name)}</td>
+          <td>${state.data.ingredients.filter((ing) => ing.unit === unit.name).length}</td>
+          <td><button class="ghost" data-action="open-unit-form" data-id="${unit.id}" type="button">编辑</button> <button class="danger" data-action="delete-unit" data-id="${unit.id}" type="button">删除</button></td>
+        </tr>
+      `).join("") || `<tr><td colspan="3" class="muted">暂无单位</td></tr>`}</tbody></table>
+    </section>
+  `;
+}
+
 function categoryOptions(selected = "") {
   return state.data.categories.map((cat) => `<option value="${cat.id}" ${cat.id === selected ? "selected" : ""}>${escapeHtml(cat.name)}</option>`).join("");
+}
+
+function unitOptions(selected = "") {
+  return state.data.units.map((unit) => `<option value="${escapeHtml(unit.name)}" ${unit.name === selected ? "selected" : ""}>${escapeHtml(unit.name)}</option>`).join("");
 }
 
 function renderRecipeAdmin() {
@@ -1915,6 +2006,30 @@ async function handleFormSubmit(form) {
     persistAndRender(id ? "已更新标签" : "已新增标签");
     return;
   }
+  if (formId === "unitForm") {
+    const name = fd.get("name").toString().trim();
+    if (!name) return showToast("单位名称必填");
+    const duplicate = state.data.units.some((item) => item.name === name && item.id !== fd.get("id"));
+    if (duplicate) return showToast("单位名称已存在");
+    const id = fd.get("id");
+    if (id) {
+      const item = unitById(id);
+      if (!item) return showToast("单位不存在");
+      const oldName = item.name;
+      item.name = name;
+      state.data.ingredients.forEach((ing) => {
+        if (ing.unit === oldName) ing.unit = name;
+      });
+      state.data.shoppingList.forEach((shop) => {
+        if (shop.unit === oldName) shop.unit = name;
+      });
+    } else {
+      state.data.units.push(unitItem(name));
+    }
+    state.modal = null;
+    persistAndRender(id ? "已更新单位" : "已新增单位");
+    return;
+  }
   if (formId === "ingredientForm") {
     const id = fd.get("id");
     const name = fd.get("name").toString().trim();
@@ -2059,7 +2174,13 @@ function parseRecipeForm(form) {
 }
 
 function recipeImportTemplateText() {
-  return JSON.stringify(RECIPE_IMPORT_TEMPLATE, null, 2);
+  return JSON.stringify({
+    ...RECIPE_IMPORT_TEMPLATE,
+    instructions: {
+      ...RECIPE_IMPORT_TEMPLATE.instructions,
+      unitOptions: state.data?.units?.map((unit) => unit.name) || defaultUnits
+    }
+  }, null, 2);
 }
 
 function recipeExternalAiPromptText(input) {
@@ -2076,7 +2197,7 @@ function recipeExternalAiPromptText(input) {
     "7. Each step must include: content, timeMinutes, consumes.",
     "8. timeMinutes is a number of minutes. Use 0 when no timer is needed.",
     "9. Each consumes item must include: name, count, unit. count must be a number.",
-    "10. Prefer these units when possible: 个, 克, 斤, 把, 颗, 片, 瓣, 勺, 碗, 份, 毫升.",
+    `10. Prefer these units when possible: ${(state.data?.units?.map((unit) => unit.name) || defaultUnits).join(", ")}.`,
     "11. If imageUrl is unavailable or unreliable, use an empty string.",
     "12. Estimate unclear ingredient amounts reasonably, but do not invent key ingredients that are not implied by the source.",
     "",
@@ -2114,7 +2235,7 @@ async function generateRecipeTemplateFromAi() {
     const response = await fetch(`${CONFIG.apiBase || "/api"}/ai-recipe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input })
+      body: JSON.stringify({ input, units: state.data.units.map((unit) => unit.name) })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "AI 解析失败");
@@ -2288,6 +2409,11 @@ document.addEventListener("click", async (event) => {
     render();
     return;
   }
+  if (action === "set-dish-view") {
+    state.data.meta.dishViewMode = btn.dataset.view === "list" ? "list" : "grid";
+    await saveAndRender();
+    return;
+  }
   if (action === "confirm-modal") {
     const fn = state.modal?.onConfirm;
     state.modal = null;
@@ -2384,6 +2510,11 @@ document.addEventListener("click", async (event) => {
     render();
     return;
   }
+  if (action === "open-unit-form") {
+    state.modal = { type: "unitForm", id: id || "" };
+    render();
+    return;
+  }
   if (action === "open-ingredient-form") {
     state.modal = { type: "ingredientForm", id: id || "" };
     render();
@@ -2448,6 +2579,15 @@ document.addEventListener("click", async (event) => {
       if (state.filters.recipeTag === tag.name) state.filters.recipeTag = "";
       await saveAndRender("已删除标签");
     }, "删除");
+    return;
+  }
+  if (action === "delete-unit") {
+    const unit = unitById(id);
+    if (!unit) return;
+    if (state.data.ingredients.some((ing) => ing.unit === unit.name)) return showToast("该单位正在被食材使用，不能删除");
+    if (state.data.shoppingList.some((item) => item.unit === unit.name)) return showToast("该单位正在被购物清单使用，不能删除");
+    state.data.units = state.data.units.filter((item) => item.id !== id);
+    await saveAndRender("已删除单位");
     return;
   }
   if (action === "delete-ingredient") {

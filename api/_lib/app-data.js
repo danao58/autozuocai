@@ -70,6 +70,7 @@ async function readSnapshot() {
       recipeName: row.recipe_name,
       cookedAt: Number(row.cooked_at)
     })),
+    units: settingsMap.units || [],
     meta: {
       version: 2,
       storageMode: "remote",
@@ -215,6 +216,7 @@ async function importSnapshot(data) {
   const meta = data.meta || {};
   await upsertSetting("expireWarningDays", meta.expireWarningDays || 3);
   await upsertSetting("emailWarning", meta.emailWarning || {});
+  await upsertSetting("units", data.units || []);
   await upsertSetting("frontPageOrder", meta.frontPageOrder || defaultFrontOrder);
   await upsertSetting("adminPageOrder", meta.adminPageOrder || defaultAdminOrder);
 }
