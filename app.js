@@ -80,7 +80,7 @@ const pageLabels = {
   history: "做菜历史",
   categories: "食材分类",
   ingredients: "食材管理",
-  tags: "标签管理",
+  tags: "菜谱标签管理",
   recipeAdmin: "菜谱管理",
   backup: "备份恢复"
 };
@@ -1474,9 +1474,9 @@ function renderShopping() {
               <em>${escapeHtml(item.unit)}</em>
             </div>
             <div class="shopping-qty" aria-label="${escapeHtml(item.name)}数量">
-              <button class="ghost" data-action="shopping-count-minus" data-id="${item.id}" type="button" aria-label="减少">-</button>
-              <span>${item.count}${escapeHtml(item.unit)}</span>
               <button class="ghost" data-action="shopping-count-plus" data-id="${item.id}" type="button" aria-label="增加">+</button>
+              <span>${item.count}${escapeHtml(item.unit)}</span>
+              <button class="ghost" data-action="shopping-count-minus" data-id="${item.id}" type="button" aria-label="减少">-</button>
             </div>
             <button class="danger shopping-delete" data-action="delete-shopping" data-id="${item.id}" type="button">删除</button>
           </article>
@@ -2415,7 +2415,11 @@ document.addEventListener("click", async (event) => {
     if (!item) return;
     const next = Number(item.count || 0) + (action === "shopping-count-plus" ? 1 : -1);
     item.count = Math.max(1, next);
-    await saveAndRender("购物数量已更新");
+    const box = btn.closest(".shopping-qty");
+    const value = box?.querySelector("span");
+    if (value) value.textContent = `${item.count}${item.unit || ""}`;
+    const saved = await storage.save(state.data);
+    if (saved !== false) showToast("购物数量已更新");
     return;
   }
   if (action === "apply-shopping") {

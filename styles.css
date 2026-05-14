@@ -833,6 +833,12 @@ label {
   color: rgba(139, 111, 90, 0.62);
 }
 
+.shopping-item.checked .shopping-qty,
+.shopping-item.checked .shopping-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .shopping-qty {
   display: grid;
   grid-template-columns: 30px minmax(52px, auto) 30px;
