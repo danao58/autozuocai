@@ -2411,7 +2411,8 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "set-dish-view") {
     state.data.meta.dishViewMode = btn.dataset.view === "list" ? "list" : "grid";
-    await saveAndRender();
+    storage.saveLocal(state.data);
+    render();
     return;
   }
   if (action === "confirm-modal") {
