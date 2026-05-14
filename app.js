@@ -937,7 +937,7 @@ function renderModal() {
               </div>
             `).join("")}
           </div>
-    `, "菜谱详情", "wide");
+    `, "菜谱详情", "wide recipe-detail-modal");
   }
   if (modal.type === "confirm") {
     return modalShell(`
