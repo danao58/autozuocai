@@ -1265,6 +1265,66 @@ label {
   background: rgba(248, 250, 247, 0.82);
 }
 
+.upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-height: 38px;
+  margin-top: 8px;
+  padding: 8px 14px;
+  border: 1px solid rgba(52, 211, 153, 0.22);
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  font-weight: 760;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(30, 92, 61, 0.06);
+}
+
+.upload-button:hover {
+  background: #dcfce7;
+  border-color: rgba(52, 211, 153, 0.34);
+}
+
+.recipe-image-box {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.recipe-image-box .recipe-image,
+.recipe-image-box .image-placeholder {
+  width: 132px;
+  height: 96px;
+  aspect-ratio: auto;
+  border-radius: 8px;
+}
+
+.recipe-image-tools {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 0;
+}
+
+.recipe-image-tools .muted {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.recipe-image-tools button {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
 .consume-row {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) minmax(154px, 190px) 44px;
@@ -2553,6 +2613,25 @@ label {
   .compact-card .actions > button {
     flex: 1 1 128px;
     width: auto;
+  }
+
+  .recipe-image-box {
+    grid-template-columns: 96px minmax(0, 1fr);
+    max-width: none;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .recipe-image-box .recipe-image,
+  .recipe-image-box .image-placeholder {
+    width: 96px;
+    height: 72px;
+  }
+
+  .recipe-image-tools button {
+    min-height: 30px;
+    padding: 5px 8px;
+    font-size: 11px;
   }
 
   .panel > .actions > button.stop-cooking-btn {

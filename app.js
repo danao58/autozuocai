@@ -1778,10 +1778,13 @@ function recipeForm(recipeItem) {
             ${tags.map((tag) => `<label class="choice-pill"><input name="tags" type="checkbox" value="${tag}" ${data.tags.includes(tag) ? "checked" : ""}>${tag}</label>`).join("") || `<span class="muted">请先在标签管理中新增标签</span>`}
           </div>
         </div>
-        <label class="full">菜品图片<input name="imageFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+        <div class="full">
+          <label>菜品图片</label>
+          <label class="upload-button">选择图片<input name="imageFile" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+        </div>
       </div>
       <input name="imageData" type="hidden" value="${escapeHtml(JSON.stringify(data.image || null))}">
-      <div class="step-box">${data.image?.url ? `<img class="recipe-image" src="${data.image.url}" alt="图片预览"><button class="danger" data-action="remove-image" type="button">删除图片</button>` : `<div class="image-placeholder">暂无图片</div>`}</div>
+      <div class="recipe-image-box">${recipeImagePreview(data.image)}</div>
       <h3 style="margin-top:16px">制作步骤</h3>
       <div id="stepsEditor">
         ${data.steps.map((s, index) => stepEditor(s, index)).join("")}
@@ -1792,6 +1795,12 @@ function recipeForm(recipeItem) {
       </div>
     </form>
   `;
+}
+
+function recipeImagePreview(image) {
+  return image?.url
+    ? `<img class="recipe-image" src="${image.url}" alt="图片预览"><div class="recipe-image-tools"><span class="muted">${escapeHtml(image.name || "已选择图片")}</span><button class="danger" data-action="remove-image" type="button">删除图片</button></div>`
+    : `<div class="image-placeholder">暂无图片</div><div class="recipe-image-tools"><span class="muted">支持 JPG、PNG、WebP，最大 2MB</span></div>`;
 }
 
 function stepEditor(stepItem, index) {
@@ -2644,7 +2653,7 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "remove-image") {
     document.querySelector("[name=imageData]").value = "null";
-    btn.closest(".step-box").innerHTML = `<div class="image-placeholder">暂无图片</div>`;
+    btn.closest(".recipe-image-box").innerHTML = recipeImagePreview(null);
     return;
   }
   if (action === "download-backup") {
@@ -2803,7 +2812,7 @@ document.addEventListener("change", async (event) => {
     reader.onload = async () => {
       const image = { id: uid("img"), name: file.name, mimeType: file.type, storageType: "local", url: reader.result };
       document.querySelector("[name=imageData]").value = JSON.stringify(image);
-      target.closest("form").querySelector(".step-box").innerHTML = `<img class="recipe-image" src="${reader.result}" alt="图片预览"><button class="danger" data-action="remove-image" type="button">删除图片</button>`;
+      target.closest("form").querySelector(".recipe-image-box").innerHTML = recipeImagePreview(image);
     };
     reader.readAsDataURL(file);
   }
