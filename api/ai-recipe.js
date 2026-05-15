@@ -2,7 +2,8 @@ const { methodNotAllowed, parseBody, sendJson } = require("./_lib/http");
 
 const DIFFICULTIES = ["简单", "中等", "复杂"];
 const DEFAULT_UNITS = ["个", "克", "斤", "把", "颗", "片", "瓣", "勺", "碗", "份", "毫升"];
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const ARK_BASE_URL = process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3";
 
 function normalizeUnits(value) {
   const units = Array.isArray(value)
@@ -63,6 +64,13 @@ function readGeminiText(data) {
   return parts.map((part) => part.text || "").join("").trim();
 }
 
+function readOpenAiText(data) {
+  const content = data?.choices?.[0]?.message?.content;
+  return Array.isArray(content)
+    ? content.map((part) => part?.text || "").join("").trim()
+    : String(content || "").trim();
+}
+
 function extractJson(text) {
   const cleaned = String(text || "").trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
   const start = cleaned.indexOf("{");
@@ -86,6 +94,74 @@ function normalizeRecipePayload(payload, units) {
   };
 }
 
+async function callArk(input, units) {
+  const apiKey = process.env.ARK_API_KEY;
+  const model = process.env.ARK_MODEL;
+  if (!apiKey || !model) return null;
+
+  const response = await fetch(`${ARK_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: "user",
+          content: buildPrompt(input, units)
+        }
+      ],
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data?.error?.message || data?.message || "AI 解析失败";
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return extractJson(readOpenAiText(data));
+}
+
+async function callGemini(input, units) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: buildPrompt(input, units) }]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: "application/json"
+      }
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data?.error?.message || "AI 解析失败";
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return extractJson(readGeminiText(data));
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     methodNotAllowed(res, ["POST"]);
@@ -93,12 +169,6 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      sendJson(res, 500, { error: "GEMINI_API_KEY is not configured" });
-      return;
-    }
-
     const body = parseBody(req);
     const input = String(body.input || "").trim();
     const units = normalizeUnits(body.units);
@@ -111,37 +181,15 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: buildPrompt(input, units) }]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: "application/json"
-        }
-      })
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = data?.error?.message || "AI 解析失败";
-      sendJson(res, response.status, { error: message });
+    const parsed = await callArk(input, units) || await callGemini(input, units);
+    if (!parsed) {
+      sendJson(res, 500, { error: "ARK_API_KEY/ARK_MODEL or GEMINI_API_KEY is not configured" });
       return;
     }
 
-    const parsed = extractJson(readGeminiText(data));
     sendJson(res, 200, normalizeRecipePayload(parsed, units));
   } catch (error) {
     console.error(error);
-    sendJson(res, 500, { error: error.message || "AI 解析失败" });
+    sendJson(res, error.status || 500, { error: error.message || "AI 解析失败" });
   }
 };

@@ -2307,7 +2307,7 @@ async function generateRecipeTemplateFromAi() {
     setRecipeAiStatus("AI 模板已生成，检查下面 JSON 后点击“导入菜谱”。", "ok");
   } catch (err) {
     const message = err.message === "Failed to fetch"
-      ? "AI 接口无法访问。本地请用 npm start 启动 Vercel Dev，不要用 63342 或直接打开 HTML；线上请检查 GEMINI_API_KEY。"
+      ? "AI 接口无法访问。本地请用 npm start 启动 Vercel Dev，不要用 63342 或直接打开 HTML；线上请检查 ARK_API_KEY/ARK_MODEL 或 GEMINI_API_KEY。"
       : err.message || "AI 解析失败";
     setRecipeAiStatus(message, "bad");
     throw new Error(message);

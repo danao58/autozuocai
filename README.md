@@ -19,10 +19,14 @@ Vercel 部署时需要配置环境变量：
 
 ```txt
 DATABASE_URL=postgresql://postgres:你的密码@db.wrpduaofxopoiqdumhyz.supabase.co:5432/postgres
+ARK_API_KEY=你的火山方舟 API Key
+ARK_MODEL=你的火山方舟模型 ID 或推理接入点 ID
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+# 可选兜底：
 GEMINI_API_KEY=你的 Google AI Studio API Key
 ```
 
-`GEMINI_API_KEY` 用于后台“菜谱模板导入”的 AI 解析功能。可以使用 Google AI Studio 的 Gemini API 免费层，免费层有请求频率限制，适合后台偶尔把文字或链接整理成菜谱 JSON 模板。AI Key 只放在 Vercel 环境变量里，不要写进前端文件。
+`ARK_API_KEY`/`ARK_MODEL` 用于后台“菜谱模板导入”的 AI 解析功能，接口优先调用火山方舟；未配置 Ark 时才使用 `GEMINI_API_KEY` 兜底。AI Key 只放在本地 `.env` 或 Vercel 环境变量里，不要写进前端文件。
 
 首次使用 Supabase 时，先在 SQL Editor 执行 `database/schema.sql`。
 
