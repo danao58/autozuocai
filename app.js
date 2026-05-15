@@ -226,7 +226,7 @@ function createEmptyData() {
   return {
     categories: [],
     ingredients: [],
-    tags: defaultTags.map((name) => tagItem(name)),
+    tags: defaultTags.map((name, index) => tagItem(name, "", index + 1)),
     units: defaultUnits.map((name) => unitItem(name)),
     recipes: [],
     todayDishes: [],
@@ -314,7 +314,7 @@ function createDemoData() {
   return normalizeData({
     categories,
     ingredients,
-    tags: defaultTags.map((name) => tagItem(name)),
+    tags: defaultTags.map((name, index) => tagItem(name, "", index + 1)),
     units: defaultUnits.map((name) => unitItem(name)),
     recipes,
     todayDishes: [],
@@ -338,8 +338,8 @@ function recipe(id, name, desc, color, tags, difficulty, favorite, steps) {
   };
 }
 
-function tagItem(name, id = "") {
-  return { id: id || uid("tag"), name };
+function tagItem(name, id = "", sortOrder = 0) {
+  return { id: id || uid("tag"), name, sortOrder: Number(sortOrder) || 0 };
 }
 
 function unitItem(name, id = "") {
@@ -461,9 +461,9 @@ function normalizeTags(tags, recipes = []) {
     });
   }
   if (!names.length) names.push(...defaultTags);
-  return names.map((name) => {
+  return names.map((name, index) => {
     const existing = Array.isArray(tags) ? tags.find((item) => item?.name === name || item === name) : null;
-    return tagItem(name, existing?.id || "");
+    return tagItem(name, existing?.id || "", existing?.sortOrder ?? index + 1);
   });
 }
 
@@ -534,6 +534,26 @@ function categoryById(id) {
 
 function tagById(id) {
   return state.data.tags.find((item) => item.id === id);
+}
+
+function sortedTags() {
+  return [...state.data.tags].sort((a, b) => {
+    const orderA = Number(a.sortOrder) || 0;
+    const orderB = Number(b.sortOrder) || 0;
+    return orderA - orderB || a.name.localeCompare(b.name, "zh-Hans-CN");
+  });
+}
+
+function sortRecipeTags(tags) {
+  const orderMap = new Map(sortedTags().map((tag, index) => [tag.name, { order: Number(tag.sortOrder) || 0, index }]));
+  return [...tags].sort((a, b) => {
+    const itemA = orderMap.get(a);
+    const itemB = orderMap.get(b);
+    if (itemA && itemB) return itemA.order - itemB.order || itemA.index - itemB.index;
+    if (itemA) return -1;
+    if (itemB) return 1;
+    return a.localeCompare(b, "zh-Hans-CN");
+  });
 }
 
 function recipeById(id) {
@@ -776,7 +796,7 @@ function imageHtml(recipeItem) {
 }
 
 function tagsHtml(tags) {
-  return `<div class="chip-row">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>`;
+  return `<div class="chip-row">${sortRecipeTags(tags).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>`;
 }
 
 function needsHtml(recipeItem) {
@@ -977,6 +997,7 @@ function renderModal() {
           <form id="tagForm">
             <input name="id" type="hidden" value="${escapeHtml(item?.id || "")}">
             <label>标签名称<input name="name" required value="${escapeHtml(item?.name || "")}"></label>
+            <label>序号${stepperInput("sortOrder", item?.sortOrder ?? state.data.tags.length + 1, 1, 0)}</label>
             <div class="actions" style="margin-top:14px">${saveButton("tagForm")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
           </form>
     `, "标签表单", "compact");
@@ -1035,11 +1056,15 @@ function renderModal() {
     `, "冰箱库存编辑", "compact");
   }
   if (modal.type === "fridgeAdd") {
+    const options = fridgeAddIngredientOptions();
     return modalShell(`
           <h2>加入食材</h2>
           <p class="muted">从食材管理中选择已有食材，填写本次加入数量。</p>
           <form id="fridgeAddForm">
-            <label>食材<select name="ingredientId">${state.data.ingredients.map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}（${escapeHtml(ing.unit)}，当前 ${ing.stock}${escapeHtml(ing.unit)}）</option>`).join("")}</select></label>
+            <label>筛选食材<input data-fridge-add-search placeholder="输入名称筛选，不能直接录入"></label>
+            <label>食材分类<select data-fridge-add-category><option value="">全部分类</option>${categoryOptions()}</select></label>
+            <label>食材<select name="ingredientId">${options}</select></label>
+            <p class="inline-status hidden" data-fridge-add-empty>没有匹配的食材，请先清空或更换筛选词</p>
             <label>加入数量${stepperInput("count", 1, 1, 1)}</label>
             <label>保质期<input name="expireAt" type="date"></label>
             <div class="actions" style="margin-top:14px">${saveButton("fridgeAddForm", "加入冰箱")}<button class="ghost" data-action="close-modal" type="button">取消</button></div>
@@ -1049,11 +1074,14 @@ function renderModal() {
   if (modal.type === "recipeForm") {
     const item = modal.id ? recipeById(modal.id) : null;
     return modalShell(`
-          <div class="modal-body">
+          <div class="recipe-modal-header">
             <h2>${item ? "编辑菜谱" : "新增菜谱"}</h2>
+            <button data-save-form="recipeForm" type="button">保存菜谱</button>
+          </div>
+          <div class="recipe-modal-content">
             ${recipeForm(item)}
           </div>
-    `, "菜谱表单", "wide");
+    `, "菜谱表单", "wide recipe-form-modal");
   }
   if (modal.type === "recipeImport") {
     return modalShell(`
@@ -1277,6 +1305,30 @@ function renderRecommend() {
   `;
 }
 
+function fridgeAddIngredientOptions(keyword = "", categoryId = "") {
+  const query = keyword.trim().toLowerCase();
+  return state.data.ingredients
+    .filter((ing) => (!categoryId || ing.categoryId === categoryId) && (!query || ing.name.toLowerCase().includes(query)))
+    .map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}（${escapeHtml(ing.unit)}，当前 ${ing.stock}${escapeHtml(ing.unit)}）</option>`)
+    .join("");
+}
+
+function filterFridgeAddIngredients(control) {
+  const form = control.closest("#fridgeAddForm");
+  if (!form) return;
+  const search = form.querySelector("[data-fridge-add-search]");
+  const category = form.querySelector("[data-fridge-add-category]");
+  const select = form.querySelector("select[name=ingredientId]");
+  const empty = form.querySelector("[data-fridge-add-empty]");
+  const save = form.querySelector("[data-save-form]");
+  if (!select) return;
+  select.innerHTML = fridgeAddIngredientOptions(search?.value || "", category?.value || "");
+  const hasOptions = select.options.length > 0;
+  select.disabled = !hasOptions;
+  if (save) save.disabled = !hasOptions;
+  if (empty) empty.classList.toggle("hidden", hasOptions);
+}
+
 function renderToday() {
   if (state.cooking) return renderCooking();
   const items = state.data.todayDishes.filter((item) => item.mealType === state.activeMeal);
@@ -1395,7 +1447,7 @@ function formatClock(seconds) {
 }
 
 function renderRecipes() {
-  const tags = state.data.tags.map((tag) => tag.name);
+  const tags = sortedTags().map((tag) => tag.name);
   const activeTag = state.filters.recipeTag;
   let list = state.data.recipes.filter((r) => {
     const keyword = state.filters.recipeSearch.trim();
@@ -1685,16 +1737,18 @@ function renderIngredients() {
 }
 
 function renderTags() {
+  const tags = sortedTags();
   return `
     <section class="panel">
       <div class="actions" style="justify-content:space-between"><h2>标签列表</h2><button data-action="open-tag-form" type="button">新增标签</button></div>
-      <table class="table"><thead><tr><th>名称</th><th>菜谱数</th><th>操作</th></tr></thead><tbody>${state.data.tags.map((tag) => `
+      <table class="table"><thead><tr><th>序号</th><th>名称</th><th>菜谱数</th><th>操作</th></tr></thead><tbody>${tags.map((tag) => `
         <tr>
+          <td>${Number(tag.sortOrder) || 0}</td>
           <td>${escapeHtml(tag.name)}</td>
           <td>${state.data.recipes.filter((recipeItem) => recipeItem.tags.includes(tag.name)).length}</td>
           <td><button class="ghost" data-action="open-tag-form" data-id="${tag.id}" type="button">编辑</button> <button class="danger" data-action="delete-tag" data-id="${tag.id}" type="button">删除</button></td>
         </tr>
-      `).join("") || `<tr><td colspan="3" class="muted">暂无标签</td></tr>`}</tbody></table>
+      `).join("") || `<tr><td colspan="4" class="muted">暂无标签</td></tr>`}</tbody></table>
     </section>
   `;
 }
@@ -1723,7 +1777,7 @@ function unitOptions(selected = "") {
 }
 
 function renderRecipeAdmin() {
-  const tags = state.data.tags.map((tag) => tag.name);
+  const tags = sortedTags().map((tag) => tag.name);
   const keyword = state.filters.recipeAdminSearch.trim();
   const activeTag = state.filters.recipeAdminTag;
   const activeDifficulty = state.filters.recipeAdminDifficulty;
@@ -1763,7 +1817,7 @@ function recipeForm(recipeItem) {
     difficulty: "简单",
     steps: [step("", 0, [])]
   };
-  const tags = state.data.tags.map((tag) => tag.name);
+  const tags = sortedTags().map((tag) => tag.name);
   return `
     <form id="recipeForm">
       <input name="id" type="hidden" value="${escapeHtml(data.id)}">
@@ -1791,7 +1845,6 @@ function recipeForm(recipeItem) {
       </div>
       <div class="actions" style="margin-top:12px">
         <button class="ghost" data-action="add-step" type="button">新增步骤</button>
-        ${saveButton("recipeForm", "保存菜谱")}
       </div>
     </form>
   `;
@@ -1996,6 +2049,7 @@ async function handleFormSubmit(form) {
   if (formId === "tagForm") {
     const id = fd.get("id");
     const name = fd.get("name").toString().trim();
+    const sortOrder = Math.max(0, Math.floor(Number(fd.get("sortOrder")) || 0));
     if (!name) return showToast("标签名称必填");
     const duplicate = state.data.tags.some((item) => item.name === name && item.id !== id);
     if (duplicate) return showToast("标签名称已存在");
@@ -2004,12 +2058,13 @@ async function handleFormSubmit(form) {
       if (!item) return showToast("标签不存在");
       const oldName = item.name;
       item.name = name;
+      item.sortOrder = sortOrder;
       state.data.recipes.forEach((recipeItem) => {
         recipeItem.tags = recipeItem.tags.map((tag) => tag === oldName ? name : tag);
       });
       if (state.filters.recipeTag === oldName) state.filters.recipeTag = name;
     } else {
-      state.data.tags.push(tagItem(name));
+      state.data.tags.push(tagItem(name, "", sortOrder || state.data.tags.length + 1));
     }
     state.modal = null;
     persistAndRender(id ? "已更新标签" : "已新增标签");
@@ -2316,7 +2371,8 @@ function normalizeTemplateTags(tags) {
 
 function ensureTag(name) {
   if (state.data.tags.some((tag) => tag.name === name)) return;
-  state.data.tags.push(tagItem(name));
+  const maxOrder = state.data.tags.reduce((max, tag) => Math.max(max, Number(tag.sortOrder) || 0), 0);
+  state.data.tags.push(tagItem(name, "", maxOrder + 1));
 }
 
 function templateImage(item) {
@@ -2787,6 +2843,10 @@ document.addEventListener("drop", async (event) => {
 
 document.addEventListener("input", (event) => {
   const target = event.target;
+  if (target.matches("[data-fridge-add-search]")) {
+    filterFridgeAddIngredients(target);
+    return;
+  }
   if (target.dataset.filter) {
     const key = target.dataset.filter;
     state.filters[key] = target.type === "checkbox" ? target.checked : target.value;
@@ -2797,6 +2857,10 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", async (event) => {
   const target = event.target;
+  if (target.matches("[data-fridge-add-category]")) {
+    filterFridgeAddIngredients(target);
+    return;
+  }
   if (target.classList.contains("shopping-check")) {
     const item = state.data.shoppingList.find((s) => s.id === target.dataset.id);
     if (!item) return;
